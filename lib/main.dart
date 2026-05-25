@@ -70,11 +70,7 @@ void main(List<String> args) async {
     titleBarStyle: TitleBarStyle.normal,
   );
 
-  windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.maximize();
-    await windowManager.show();
-    await windowManager.focus();
-  });
+
 
   runApp(
     const MaterialApp(
@@ -82,6 +78,12 @@ void main(List<String> args) async {
       home: WebViewPage(),
     ),
   );
+
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.maximize();
+    await windowManager.show();
+    await windowManager.focus();
+  });
 }
 
 class WebViewPage extends StatefulWidget {

@@ -2,10 +2,12 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 [Setup]
+AppId={{147A48C2-0ADB-4166-810C-4ED83A4449D3}}
 AppName=PC POS
-AppVersion=1.0
+AppVersion=1.0.1
 DefaultDirName={localappdata}\PC_POS
 DefaultGroupName=PC POS
+OutputDir=Output
 OutputBaseFilename=PC_POS_Setup
 Compression=lzma
 SolidCompression=yes
