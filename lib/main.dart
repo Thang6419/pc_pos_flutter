@@ -91,7 +91,7 @@ class WebViewPage extends StatefulWidget {
   State<WebViewPage> createState() => _WebViewPageState();
 }
 
-class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
+class _WebViewPageState extends State<WebViewPage> {
   static const String baseUrl = 'http://103.159.59.15:8082/';
 
   final GlobalKey webViewKey = GlobalKey();
@@ -111,14 +111,6 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
     super.initState();
     init();
     _loadDeviceId();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      webViewController?.reload();
-    }
   }
 
   Future<void> init() async {
