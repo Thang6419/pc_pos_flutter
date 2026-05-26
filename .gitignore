@@ -56,3 +56,4 @@ MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 *.exe
 *.rar
 **/MicrosoftEdgeWebView2RuntimeInstallerX64.exe
+vc_redist.x64.exe

@@ -4,7 +4,7 @@
 [Setup]
 AppId={{147A48C2-0ADB-4166-810C-4ED83A4449D3}}
 AppName=PC POS
-AppVersion=1.0.4
+AppVersion=1.0.6
 DefaultDirName={localappdata}\PC_POS
 DefaultGroupName=PC POS
 OutputDir=Output
@@ -16,11 +16,13 @@ DisableProgramGroupPage=yes
 [Files]
 Source: "C:\Users\thang\Documents\pc_pos\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
 Source: "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+
 [Icons]
 Name: "{group}\PC POS"; Filename: "{app}\pc_pos.exe"
 Name: "{commondesktop}\PC POS"; Filename: "{app}\pc_pos.exe"
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; Flags: waituntilterminated
-
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; Flags: waituntilterminated
 Filename: "{app}\pc_pos.exe"; Description: "Launch PC POS"; Flags: nowait postinstall skipifsilent

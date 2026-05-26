@@ -1,9 +1,35 @@
 import 'dart:async';
-import 'dart:io';
-
+import 'dart:typed_data'; // Đã sửa thành typed_data chuẩn
 import 'package:flutter/material.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+
+// Giữ lại hàm chuyển đổi này để "mớm" đúng loại byte máy in cần, tránh làm crash firmware của máy
+Uint8List encodeCP1258(String text) {
+  const unicode = 'áàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữựýỳỷỹỵđÁÀẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÉÈẺẼẸÊẾỀỂỄỆÍÌỈĨỊÓÒỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÚÙỦŨỤƯỨỪỬỮỰÝỲỶỸYĐ';
+  const cp1258  = [
+    0xe1, 0xe0, 0xec, 0xe3, 0xf2, 0xe2, 0xe1, 0xe0, 0xec, 0xe3, 0xf2, 0xe2, 0xe5, 0xe4, 0xec, 0xe3, 0xf2, 0xe2,
+    0xe9, 0xe8, 0xec, 0xe3, 0xf2, 0xea, 0xe9, 0xe8, 0xec, 0xe3, 0xf2, 0xed, 0xee, 0xec, 0xe3, 0xf2, 0xf3, 0xf2,
+    0xec, 0xe3, 0xf2, 0xf4, 0xf3, 0xf2, 0xec, 0xe3, 0xf2, 0xf5, 0xf3, 0xf2, 0xec, 0xe3, 0xf2, 0xfa, 0xf9, 0xec,
+    0xe3, 0xf2, 0xfb, 0xfa, 0xf9, 0xec, 0xe3, 0xf2, 0xfd, 0xef, 0xec, 0xe3, 0xf2, 0xfc, 0xc1, 0xc0, 0xec, 0xe3,
+    0xf2, 0xc2, 0xc1, 0xc0, 0xec, 0xe3, 0xf2, 0xc2, 0xc5, 0xc4, 0xec, 0xe3, 0xf2, 0xc2, 0xc9, 0xc8, 0xec, 0xe3,
+    0xf2, 0xca, 0xc9, 0xc8, 0xec, 0xe3, 0xf2, 0xcd, 0xce, 0xec, 0xe3, 0xf2, 0xd3, 0xd2, 0xec, 0xe3, 0xf2, 0xd4,
+    0xd3, 0xd2, 0xec, 0xe3, 0xf2, 0xd5, 0xd3, 0xd2, 0xec, 0xe3, 0xf2, 0xda, 0xd9, 0xec, 0xe3, 0xf2, 0xdb, 0xda,
+    0xd9, 0xec, 0xe3, 0xf2, 0xdc
+  ];
+
+  List<int> result = [];
+  for (int i = 0; i < text.length; i++) {
+    String char = text[i];
+    int index = unicode.indexOf(char);
+    if (index != -1 && index < cp1258.length) {
+      result.add(cp1258[index]);
+    } else {
+      result.add(text.codeUnitAt(i));
+    }
+  }
+  return Uint8List.fromList(result);
+}
 
 class PrinterFloatingAction extends StatefulWidget {
   const PrinterFloatingAction({super.key});
@@ -13,13 +39,9 @@ class PrinterFloatingAction extends StatefulWidget {
 }
 
 class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
-  final TextEditingController ipController = TextEditingController(
-    text: '10.10.30.252',
-  );
-
-  final TextEditingController portController = TextEditingController(
-    text: '9100',
-  );
+  final TextEditingController ipController = TextEditingController(text: '10.10.30.252');
+  final TextEditingController portController = TextEditingController(text: '9100');
+  bool isPrinting = false;
 
   @override
   void dispose() {
@@ -28,46 +50,25 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
     super.dispose();
   }
 
-  Future<bool> _canConnect(String ip, int port) async {
-    try {
-      final socket = await Socket.connect(
-        ip,
-        port,
-        timeout: const Duration(seconds: 3),
-      );
-
-      socket.destroy();
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
+  // VẪN DÙNG LUỒNG NETWORK PRINTER CỦA THƯ VIỆN NHƯ CŨ
   Future<void> _printTest({
     required String ip,
     required int port,
   }) async {
-    final canConnect = await _canConnect(ip, port);
-
-    if (!canConnect) {
-      throw Exception('PRINTER_NOT_FOUND');
-    }
-
     final profile = await CapabilityProfile.load();
     final printer = NetworkPrinter(PaperSize.mm80, profile);
 
-    final result = await printer
-        .connect(
-          ip,
-          port: port,
-        )
-        .timeout(const Duration(seconds: 5));
+    final result = await printer.connect(ip, port: port).timeout(
+      const Duration(seconds: 4),
+      onTimeout: () => PosPrintResult.timeout,
+    );
 
     if (result != PosPrintResult.success) {
-      throw Exception(result.msg);
+      throw Exception('Lỗi kết nối: ${result.msg}');
     }
 
     try {
+      // 1. Tiêu đề tiếng Anh thường
       printer.text(
         'PC POS',
         styles: const PosStyles(
@@ -80,67 +81,63 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
 
       printer.hr();
 
-      printer.text(
-        'TEST PRINT',
-        styles: const PosStyles(
-          align: PosAlign.center,
-          bold: true,
-        ),
+      // Dùng textEncoded phối hợp với encodeCP1258()
+      printer.textEncoded(
+        encodeCP1258('HÓA ĐƠN BÁN HÀNG'),
+        styles: const PosStyles(align: PosAlign.center, bold: true),
       );
 
+      printer.textEncoded(encodeCP1258('Địa chỉ: 123 Đường Chu Văn An, Hà Nội'));
+      printer.textEncoded(encodeCP1258('Điện thoại: 0987654321'));
       printer.text('Printer IP: $ip');
-      printer.text('Printer Port: $port');
 
       printer.hr();
 
+      // Chia hàng cột bằng Lib cũ thoải mái
       printer.row([
         PosColumn(
-          text: 'Item',
+          textEncoded: encodeCP1258('Tên món'),
           width: 8,
           styles: const PosStyles(bold: true),
         ),
         PosColumn(
-          text: 'Price',
+          textEncoded: encodeCP1258('T.Tiền'),
           width: 4,
-          styles: const PosStyles(
-            align: PosAlign.right,
-            bold: true,
-          ),
+          styles: const PosStyles(align: PosAlign.right, bold: true),
         ),
       ]);
 
       printer.row([
-        PosColumn(text: 'Cafe den', width: 8),
-        PosColumn(
-          text: '25,000',
-          width: 4,
-          styles: const PosStyles(align: PosAlign.right),
-        ),
+        PosColumn(textEncoded: encodeCP1258('Cà phê đen đá'), width: 8),
+        PosColumn(text: '25,000', width: 4, styles: const PosStyles(align: PosAlign.right)),
       ]);
 
       printer.row([
-        PosColumn(text: 'Tra sua', width: 8),
-        PosColumn(
-          text: '35,000',
-          width: 4,
-          styles: const PosStyles(align: PosAlign.right),
-        ),
+        PosColumn(textEncoded: encodeCP1258('Trà sữa trân châu'), width: 8),
+        PosColumn(text: '35,000', width: 4, styles: const PosStyles(align: PosAlign.right)),
       ]);
 
       printer.hr();
 
-      printer.text(
-        'Total: 60,000 VND',
-        styles: const PosStyles(
-          align: PosAlign.right,
-          bold: true,
-        ),
+      printer.row([
+        PosColumn(textEncoded: encodeCP1258('TỔNG CỘNG:'), width: 6, styles: const PosStyles(bold: true)),
+        PosColumn(text: '60,000 VND', width: 6, styles: const PosStyles(align: PosAlign.right, bold: true)),
+      ]);
+
+      printer.hr();
+
+      printer.textEncoded(
+        encodeCP1258('Cảm ơn quý khách. Hẹngặp lại!'),
+        styles: const PosStyles(align: PosAlign.center),
       );
 
-      printer.feed(2);
+      printer.feed(3);
       printer.cut();
+
+    } catch (e) {
+      rethrow;
     } finally {
-      printer.disconnect();
+      printer.disconnect(); // Ngắt kết nối sạch sẽ
     }
   }
 
@@ -149,11 +146,11 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) {
-        bool isPrinting = false;
-
         return StatefulBuilder(
           builder: (context, setModalState) {
             Future<void> handlePrint() async {
+              if (isPrinting) return;
+
               final ip = ipController.text.trim();
               final port = int.tryParse(portController.text.trim()) ?? 9100;
 
@@ -162,51 +159,22 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
                 return;
               }
 
-              setModalState(() {
-                isPrinting = true;
-              });
+              setModalState(() { isPrinting = true; });
+              setState(() { isPrinting = true; });
 
               try {
-                await _printTest(
-                  ip: ip,
-                  port: port,
-                );
+                await _printTest(ip: ip, port: port);
 
                 if (!mounted) return;
-
                 Navigator.pop(dialogContext);
-
                 _showMessage('In test thành công');
               } catch (e) {
-                final errorText = e.toString();
-
-                String message = 'In thất bại';
-
-                if (errorText.contains('PRINTER_NOT_FOUND')) {
-                  message =
-                      'Không tìm thấy máy in.\nKiểm tra IP, port, mạng LAN hoặc máy in đã bật chưa.';
-                } else if (errorText.contains('TimeoutException') ||
-                    errorText.toLowerCase().contains('timeout')) {
-                  message =
-                      'Kết nối máy in bị timeout.\nKiểm tra IP, port hoặc mạng LAN.';
-                } else if (errorText.contains('Connection refused')) {
-                  message =
-                      'Máy in từ chối kết nối.\nKiểm tra port, thường là 9100.';
-                } else if (errorText.contains('Network is unreachable')) {
-                  message =
-                      'Không truy cập được mạng.\nKiểm tra kết nối WiFi/LAN.';
-                } else {
-                  message = 'In thất bại:\n$errorText';
-                }
-
                 if (!mounted) return;
-
-                _showMessage(message);
+                _showMessage('In thất bại:\n$e');
               } finally {
-                if (context.mounted) {
-                  setModalState(() {
-                    isPrinting = false;
-                  });
+                if (mounted) {
+                  setModalState(() { isPrinting = false; });
+                  setState(() { isPrinting = false; });
                 }
               }
             }
@@ -220,30 +188,20 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
                     controller: ipController,
                     enabled: !isPrinting,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'IP máy in',
-                      hintText: '10.10.30.252',
-                    ),
+                    decoration: const InputDecoration(labelText: 'IP máy in'),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: portController,
                     enabled: !isPrinting,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Port',
-                      hintText: '9100',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Port'),
                   ),
                 ],
               ),
               actions: [
                 TextButton(
-                  onPressed: isPrinting
-                      ? null
-                      : () {
-                          Navigator.pop(dialogContext);
-                        },
+                  onPressed: isPrinting ? null : () => Navigator.pop(dialogContext),
                   child: const Text('Đóng'),
                 ),
                 ElevatedButton(
@@ -252,9 +210,7 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
                       ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text('In test'),
                 ),
@@ -268,11 +224,8 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
 
   void _showMessage(String message) {
     if (!mounted) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
     );
   }
 

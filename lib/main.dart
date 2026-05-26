@@ -49,8 +49,12 @@ Future<WebViewEnvironment?> createWebViewEnv() async {
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // WINDOW PHỤ - Flutter UI only
+// WINDOW PHỤ - Flutter UI only
   if (args.isNotEmpty && args[0] == 'multi_window') {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    // BỎ TOÀN BỘ windowManager ở đây để tránh lỗi MissingPluginException
+
     final argument = args.length > 2 && args[2].isNotEmpty ? args[2] : '{}';
     final data = jsonDecode(argument) as Map<String, dynamic>;
 
@@ -59,6 +63,7 @@ void main(List<String> args) async {
         initialData: data,
       ),
     );
+
     return;
   }
 
@@ -66,8 +71,9 @@ void main(List<String> args) async {
   await windowManager.ensureInitialized();
 
   const windowOptions = WindowOptions(
-    titleBarStyle: TitleBarStyle.normal,
+    titleBarStyle: TitleBarStyle.hidden,
     skipTaskbar: false,
+    alwaysOnTop: false,
   );
 
   await windowManager.waitUntilReadyToShow(windowOptions);
@@ -100,7 +106,7 @@ class WebViewPage extends StatefulWidget {
   State<WebViewPage> createState() => _WebViewPageState();
 }
 
-class _WebViewPageState extends State<WebViewPage> {
+class _WebViewPageState extends State<WebViewPage> with WindowListener {
   static const String baseUrl = 'http://103.159.59.15:8082/';
 
   final GlobalKey webViewKey = GlobalKey();
@@ -120,6 +126,31 @@ class _WebViewPageState extends State<WebViewPage> {
     super.initState();
     init();
     _loadDeviceId();
+    windowManager.addListener(this);
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this); // 3. Hủy lắng nghe khi hủy widget
+    super.dispose();
+  }
+
+  @override
+  @override
+  void onWindowClose() async {
+    if (secondWindowId != null) {
+      // Lấy danh sách các window phụ đang chạy
+      final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
+
+      // Nếu ID lưu trữ không còn nằm trong danh sách subWindowIds nữa tức là đã bị user tắt
+      if (!subWindowIds.contains(secondWindowId)) {
+        setState(() {
+          secondWindow = null;
+          secondWindowId = null;
+        });
+        await writeLog('SECOND WINDOW CLOSED BY USER - RESET STATE');
+      }
+    }
   }
 
   Future<void> init() async {
@@ -211,31 +242,47 @@ class _WebViewPageState extends State<WebViewPage> {
   Future<void> openSecondWindow({
     Map<String, dynamic>? initialData,
   }) async {
-    if (secondWindow != null && secondWindowId != null) {
-      try {
-        await secondWindow!.show();
-        return;
-      } catch (_) {
-        secondWindow = null;
-        secondWindowId = null;
+    if (secondWindowId != null) {
+      final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
+      if (subWindowIds.contains(secondWindowId)) {
+        try {
+          await secondWindow!.show();
+          return;
+        } catch (_) {
+          secondWindow = null;
+          secondWindowId = null;
+        }
       }
     }
 
     final targetDisplay = await _getOtherDisplay();
-
     if (targetDisplay == null) {
       await writeLog('NO SECOND DISPLAY');
       return;
     }
 
+    // 1. Lấy vị trí và kích thước gốc của màn hình phụ
     final pos = targetDisplay.visiblePosition ?? Offset.zero;
     final size = targetDisplay.size;
 
+    // 2. Lấy tỉ lệ Scale (DPI) thực tế của màn hình phụ (Mặc định là 1.0 nếu lỗi)
+// Thêm .toDouble() vào cuối để ép kiểu sang double một cách an toàn
+    final double scaleFactor = (targetDisplay.scaleFactor ?? 1.0).toDouble();
+    // 3. Tính toán bù trừ phần hụt (Do thanh Titlebar ẩn kích thước khoảng 32px-40px)
+    // Nếu màn hình bị scale, ta phải chia tọa độ cho scaleFactor để ép Windows kéo dãn đúng tỉ lệ
+    final double titleBarHeight =
+        40.0; // Tăng lên 40px để che triệt để thanh tiêu đề
+    final double extraEdge =
+        8.0; // Phần rìa bóng ẩn của Windows (Drop Shadow border)
+
     final frame = Rect.fromLTWH(
-      pos.dx - 8,
-      pos.dy,
-      size.width + 16,
-      size.height,
+      pos.dx - extraEdge, // Tràn sang trái một chút để khít viền
+      pos.dy -
+          titleBarHeight, // Đẩy hẳn thanh tiêu đề lên trên out khỏi màn hình
+      size.width + (extraEdge * 2), // Bù chiều rộng tràn sang 2 bên
+      size.height +
+          titleBarHeight +
+          extraEdge, // Bù chiều cao để đẩy sát xuống đáy màn hình
     );
 
     final window = await DesktopMultiWindow.createWindow(
@@ -245,13 +292,18 @@ class _WebViewPageState extends State<WebViewPage> {
       }),
     );
 
-    secondWindow = window;
-    secondWindowId = window.windowId;
+    setState(() {
+      secondWindow = window;
+      secondWindowId = window.windowId;
+    });
 
-    window
-      ..setFrame(frame)
-      ..setTitle('Customer Display')
-      ..show();
+    // 4. Áp khung hình chuẩn đã tính toán
+    await window.setFrame(frame);
+
+    // 5. Hiển thị màn hình phụ
+    await window.show();
+
+    await writeLog('SECOND WINDOW FORCED FULLSCREEN WITH SCALE: $scaleFactor');
   }
 
   Future<void> sendToCustomerDisplay(Map<String, dynamic> data) async {
