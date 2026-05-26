@@ -66,11 +66,14 @@ void main(List<String> args) async {
   await windowManager.ensureInitialized();
 
   const windowOptions = WindowOptions(
-    center: true,
     titleBarStyle: TitleBarStyle.normal,
+    skipTaskbar: false,
   );
 
+  await windowManager.waitUntilReadyToShow(windowOptions);
 
+  await windowManager.show();
+  await windowManager.focus();
 
   runApp(
     const MaterialApp(
@@ -79,10 +82,14 @@ void main(List<String> args) async {
     ),
   );
 
-    windowManager.waitUntilReadyToShow(windowOptions, () async {
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+    await windowManager.setResizable(true);
+    await windowManager.setMaximizable(true);
     await windowManager.maximize();
-    await windowManager.show();
-    await windowManager.focus();
+
+    await Future.delayed(const Duration(milliseconds: 500));
+    await windowManager.maximize();
   });
 }
 
