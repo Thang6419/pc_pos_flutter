@@ -93,9 +93,10 @@ void main(List<String> args) async {
     await windowManager.setResizable(true);
     await windowManager.setMaximizable(true);
     await windowManager.maximize();
+    await windowManager.setFullScreen(true);
 
     await Future.delayed(const Duration(milliseconds: 500));
-    await windowManager.maximize();
+    await windowManager.setFullScreen(true);
   });
 }
 
@@ -115,8 +116,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   InAppWebViewController? webViewController;
 
   String? deviceId;
-  bool isLoading = true;
-  bool _deviceIdAlertShown = false;
+  bool isLoading = false;
 
   WindowController? secondWindow;
   int? secondWindowId;
@@ -125,7 +125,6 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   void initState() {
     super.initState();
     init();
-    _loadDeviceId();
     windowManager.addListener(this);
   }
 
@@ -165,22 +164,10 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     });
   }
 
-  Future<void> _loadDeviceId() async {
+  Future<String> loadDeviceId() async {
     final id = await DeviceIdService.getDeviceId();
-
-    if (!mounted) return;
-
-    setState(() {
-      deviceId = id;
-      isLoading = false;
-    });
-
-    if (!_deviceIdAlertShown) {
-      _deviceIdAlertShown = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _showDeviceIdAlert(id);
-      });
-    }
+    _showDeviceIdAlert(id);
+    return id;
   }
 
   void _showDeviceIdAlert(String id) {
@@ -325,6 +312,25 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     }
   }
 
+  Future<void> toggleFullScreen() async {
+    // 1. Kiểm tra xem hiện tại có đang fullscreen không
+    await windowManager.maximize();
+
+    bool isFull = await windowManager.isFullScreen();
+
+    // 2. Set trạng thái ngược lại
+    if (isFull) {
+      await windowManager.setFullScreen(false);
+    } else {
+      await windowManager.setFullScreen(!isFull);
+    }
+  }
+
+  Future<void> closeApp() async {
+    // Hàm này sẽ đóng cửa sổ ứng dụng ngay lập tức
+    await windowManager.close();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading || env == null) {
@@ -343,6 +349,24 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             heroTag: 'open_second_window',
             onPressed: () => openSecondWindow(),
             child: const Icon(Icons.open_in_new),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'toggle_fullscreen',
+            onPressed: () => toggleFullScreen(),
+            child: const Icon(Icons.fullscreen),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'close_app',
+            onPressed: () => closeApp(),
+            child: const Icon(Icons.close),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'load_device_id',
+            onPressed: () => loadDeviceId(),
+            child: const Icon(Icons.device_hub),
           ),
         ],
       ),
