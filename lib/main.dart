@@ -4,11 +4,82 @@ import 'dart:io';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:pc_pos/local_image_gallery.dart';
 import 'package:pc_pos/printer.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'device_id_service.dart';
+
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
+
+int? _singleInstanceMutexHandle;
+
+typedef CreateMutexWNative = IntPtr Function(
+  Pointer<Void>,
+  Int32,
+  Pointer<Utf16>,
+);
+
+typedef CreateMutexWDart = int Function(
+  Pointer<Void>,
+  int,
+  Pointer<Utf16>,
+);
+
+typedef GetLastErrorNative = Uint32 Function();
+typedef GetLastErrorDart = int Function();
+
+const int ERROR_ALREADY_EXISTS = 183;
+
+Future<bool> ensureSingleInstance() async {
+  final logFile = File(
+      '${Platform.environment['LOCALAPPDATA']}\\PC_POS_single_instance.log');
+
+  final kernel32 = DynamicLibrary.open('kernel32.dll');
+
+  final createMutex =
+      kernel32.lookupFunction<CreateMutexWNative, CreateMutexWDart>(
+    'CreateMutexW',
+  );
+
+  final getLastError =
+      kernel32.lookupFunction<GetLastErrorNative, GetLastErrorDart>(
+    'GetLastError',
+  );
+
+  // DÙNG Local, đừng dùng Global
+  final mutexName = 'Local\\PC_POS_SINGLE_INSTANCE_MUTEX'.toNativeUtf16();
+
+  final handle = createMutex(
+    nullptr,
+    0,
+    mutexName,
+  );
+
+  final error = getLastError();
+
+  calloc.free(mutexName);
+
+  await logFile.writeAsString(
+    'pid=$pid, handle=$handle, error=$error, exe=${Platform.resolvedExecutable}\n',
+    mode: FileMode.append,
+  );
+
+  if (handle == 0) {
+    // tạo mutex lỗi thì coi như không cho mở thêm để an toàn
+    return false;
+  }
+
+  _singleInstanceMutexHandle = handle;
+
+  if (error == ERROR_ALREADY_EXISTS) {
+    return false;
+  }
+
+  return true;
+}
 
 Future<void> writeLog(Object? message) async {
   final dir =
@@ -67,6 +138,11 @@ void main(List<String> args) async {
     return;
   }
 
+  final ok = await ensureSingleInstance();
+
+  if (!ok) {
+    exit(0);
+  }
   // WINDOW CHÍNH
   await windowManager.ensureInitialized();
 
@@ -92,10 +168,7 @@ void main(List<String> args) async {
     await Future.delayed(const Duration(milliseconds: 500));
     await windowManager.setResizable(true);
     await windowManager.setMaximizable(true);
-    await windowManager.maximize();
-    await windowManager.setFullScreen(true);
-
-    await Future.delayed(const Duration(milliseconds: 500));
+    // await windowManager.maximize();
     await windowManager.setFullScreen(true);
   });
 }
@@ -170,11 +243,25 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     return id;
   }
 
+  Future<String> getMachineGuid() async {
+    final result = await Process.run(
+      'powershell',
+      ['(Get-CimInstance Win32_ComputerSystemProduct).UUID'],
+    );
+
+    if (result.exitCode != 0) {
+      throw Exception(result.stderr);
+    }
+    final id = result.stdout.toString().trim();
+    _showDeviceIdAlert(id);
+    return id;
+  }
+
   void _showDeviceIdAlert(String id) {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Device ID'),
+        title: const Text('Device IDssss'),
         content: SelectableText(id),
         actions: [
           FilledButton(
@@ -364,6 +451,12 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           ),
           const SizedBox(height: 12),
           FloatingActionButton(
+            heroTag: 'get_machine_guid',
+            onPressed: () => getMachineGuid(),
+            child: const Icon(Icons.memory),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
             heroTag: 'load_device_id',
             onPressed: () => loadDeviceId(),
             child: const Icon(Icons.device_hub),
@@ -473,141 +566,162 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
         backgroundColor: const Color(0xFFF7F7F7),
         body: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            padding: const EdgeInsets.all(24),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.receipt_long, size: 42),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Text(
-                        'Customer Display',
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                    ),
-                    Text(
-                      'Table: $tableNo',
-                      style:
-                          Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 32),
+                // LEFT: Product list
                 Expanded(
-                  child: items.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No items',
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w600,
+                  flex: 1,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.receipt_long, size: 38),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Customer Display',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                             ),
                           ),
-                        )
-                      : ListView.separated(
-                          itemCount: items.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 12),
-                          itemBuilder: (context, index) {
-                            final item = items[index];
-
-                            final name = '${item['name'] ?? '-'}';
-                            final qty = item['qty'] ?? 0;
-                            final price = item['price'] ?? 0;
-
-                            return Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 18,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    blurRadius: 12,
-                                    offset: Offset(0, 4),
-                                    color: Color(0x14000000),
-                                  ),
-                                ],
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      name,
-                                      style: const TextStyle(
-                                        fontSize: 26,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    'x$qty',
-                                    style: const TextStyle(
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 40),
-                                  SizedBox(
-                                    width: 180,
-                                    child: Text(
-                                      formatMoney(price),
-                                      textAlign: TextAlign.right,
-                                      style: const TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                ),
-                const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 28,
-                    vertical: 24,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'TOTAL',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.bold,
+                          Text(
+                            'Table: $tableNo',
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
                           ),
-                        ),
+                        ],
                       ),
-                      Text(
-                        formatMoney(total),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 36,
-                          fontWeight: FontWeight.bold,
+                      const SizedBox(height: 24),
+                      Expanded(
+                        child: items.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  'No items',
+                                  style: TextStyle(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              )
+                            : ListView.separated(
+                                itemCount: items.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 12),
+                                itemBuilder: (context, index) {
+                                  final item = items[index];
+
+                                  final name = '${item['name'] ?? '-'}';
+                                  final qty = item['qty'] ?? 0;
+                                  final price = item['price'] ?? 0;
+
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                      vertical: 16,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(16),
+                                      boxShadow: const [
+                                        BoxShadow(
+                                          blurRadius: 12,
+                                          offset: Offset(0, 4),
+                                          color: Color(0x14000000),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            name,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 24,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                          'x$qty',
+                                          style: const TextStyle(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 24),
+                                        SizedBox(
+                                          width: 150,
+                                          child: Text(
+                                            formatMoney(price),
+                                            textAlign: TextAlign.right,
+                                            style: const TextStyle(
+                                              fontSize: 22,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      const SizedBox(height: 20),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 22,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'TOTAL',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              formatMoney(total),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 34,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
+                ),
+
+                const SizedBox(width: 24),
+
+                // RIGHT: Gallery
+                const Expanded(
+                  flex: 1,
+                  child: LocalImageGallery(),
                 ),
               ],
             ),

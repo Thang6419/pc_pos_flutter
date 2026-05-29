@@ -485,7 +485,8 @@ class _PrinterFloatingActionState extends State<PrinterFloatingAction> {
 
               try {
                 await _printViaPureSocket(ip: ip, port: port);
-
+                await _printViaPureSocket(ip: ip, port: port);
+                await _printViaPureSocket(ip: ip, port: port);
                 if (!mounted) return;
                 Navigator.pop(dialogContext);
                 _showMessage('In test thành công');
