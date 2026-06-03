@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
 
 class LocalImageGallery extends StatefulWidget {
@@ -11,17 +12,16 @@ class LocalImageGallery extends StatefulWidget {
 }
 
 class _LocalImageGalleryState extends State<LocalImageGallery> {
-  // ===== ĐẶT FOLDER Ở ĐÂY =====
   final String folderPath = r'D:\PC_POS_IMAGES';
 
   List<File> images = [];
+  int currentIndex = 0;
 
-  StreamSubscription? watchSubscription;
+  StreamSubscription<FileSystemEvent>? watchSubscription;
 
   @override
   void initState() {
     super.initState();
-
     loadImages();
     watchFolder();
   }
@@ -58,84 +58,130 @@ class _LocalImageGalleryState extends State<LocalImageGallery> {
 
     setState(() {
       images = scannedImages;
+
+      if (currentIndex >= images.length) {
+        currentIndex = 0;
+      }
     });
   }
 
-  void watchFolder() {
+  void watchFolder() async {
     final dir = Directory(folderPath);
 
-    watchSubscription = dir.watch().listen((event) async {
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    watchSubscription = dir.watch(recursive: true).listen((event) async {
       await Future.delayed(const Duration(milliseconds: 300));
 
-      loadImages();
+      if (mounted) {
+        await loadImages();
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
     if (images.isEmpty) {
-      return Center(
-        child: Text(
-          'Không có ảnh\n$folderPath',
-          textAlign: TextAlign.center,
-        ),
-      );
+      return const SizedBox.expand();
     }
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: images.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemBuilder: (_, index) {
-        final image = images[index];
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CarouselSlider.builder(
+              itemCount: images.length,
+              options: CarouselOptions(
+                viewportFraction: 1,
+                height: double.infinity,
+                autoPlay: images.length > 1,
+                autoPlayInterval: const Duration(seconds: 3),
+                autoPlayAnimationDuration: const Duration(milliseconds: 600),
+                enableInfiniteScroll: images.length > 1,
+                scrollPhysics: const NeverScrollableScrollPhysics(),
+                onPageChanged: (index, reason) {
+                  if (!mounted) return;
 
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.file(
-                image,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) {
-                  return Container(
-                    color: Colors.grey.shade300,
-                    child: const Icon(Icons.broken_image),
+                  setState(() {
+                    currentIndex = index;
+                  });
+                },
+              ),
+              itemBuilder: (_, index, __) {
+                return SizedBox.expand(
+                    child: Image.file(
+                  images[index],
+                  fit: BoxFit.cover, // hoặc contain nếu muốn hiện full ảnh
+                  errorBuilder: (_, __, ___) {
+                    return Container(
+                      color: Colors.black12,
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.broken_image,
+                        size: 60,
+                      ),
+                    );
+                  },
+                ));
+              },
+            ),
+          ),
+        ),
+
+        // gradient dưới cho dễ nhìn dot
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 120,
+          child: IgnorePointer(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Color(0x88000000),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // dots overlay
+        if (images.length > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 24,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                images.length,
+                (index) {
+                  final isActive = currentIndex == index;
+
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    width: isActive ? 24 : 8,
+                    height: 8,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      color: isActive
+                          ? Colors.white
+                          : Colors.white.withOpacity(0.4),
+                    ),
                   );
                 },
               ),
-              Positioned(
-                left: 6,
-                right: 6,
-                bottom: 6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    image.path.split('\\').last,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        );
-      },
+      ],
     );
   }
 }
