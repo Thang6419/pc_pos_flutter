@@ -5,118 +5,13 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:pc_pos/customer.dart';
-import 'package:pc_pos/local_image_gallery.dart';
 import 'package:pc_pos/printer.dart';
+import 'package:pc_pos/utils/common.dart';
+import 'package:pc_pos/utils/contanst.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'device_id_service.dart';
-
-import 'dart:ffi';
-import 'package:ffi/ffi.dart';
-
-int? _singleInstanceMutexHandle;
-
-typedef CreateMutexWNative = IntPtr Function(
-  Pointer<Void>,
-  Int32,
-  Pointer<Utf16>,
-);
-
-typedef CreateMutexWDart = int Function(
-  Pointer<Void>,
-  int,
-  Pointer<Utf16>,
-);
-
-typedef GetLastErrorNative = Uint32 Function();
-typedef GetLastErrorDart = int Function();
-
-const int ERROR_ALREADY_EXISTS = 183;
-
-Future<bool> ensureSingleInstance() async {
-  final logFile = File(
-      '${Platform.environment['LOCALAPPDATA']}\\PC_POS_single_instance.log');
-
-  final kernel32 = DynamicLibrary.open('kernel32.dll');
-
-  final createMutex =
-      kernel32.lookupFunction<CreateMutexWNative, CreateMutexWDart>(
-    'CreateMutexW',
-  );
-
-  final getLastError =
-      kernel32.lookupFunction<GetLastErrorNative, GetLastErrorDart>(
-    'GetLastError',
-  );
-
-  // DÙNG Local, đừng dùng Global
-  final mutexName = 'Local\\PC_POS_SINGLE_INSTANCE_MUTEX'.toNativeUtf16();
-
-  final handle = createMutex(
-    nullptr,
-    0,
-    mutexName,
-  );
-
-  final error = getLastError();
-
-  calloc.free(mutexName);
-
-  await logFile.writeAsString(
-    'pid=$pid, handle=$handle, error=$error, exe=${Platform.resolvedExecutable}\n',
-    mode: FileMode.append,
-  );
-
-  if (handle == 0) {
-    // tạo mutex lỗi thì coi như không cho mở thêm để an toàn
-    return false;
-  }
-
-  _singleInstanceMutexHandle = handle;
-
-  if (error == ERROR_ALREADY_EXISTS) {
-    return false;
-  }
-
-  return true;
-}
-
-Future<void> writeLog(Object? message) async {
-  final dir =
-      Directory('${Platform.environment['LOCALAPPDATA']}\\PC_POS\\logs');
-  if (!dir.existsSync()) dir.createSync(recursive: true);
-
-  final file = File('${dir.path}\\app.log');
-
-  await file.writeAsString(
-    '[${DateTime.now()}] $message\n',
-    mode: FileMode.append,
-    flush: true,
-  );
-}
-
-Future<WebViewEnvironment?> createWebViewEnv() async {
-  try {
-    final version = await WebViewEnvironment.getAvailableVersion();
-
-    if (version == null) {
-      await writeLog('WEBVIEW2 NOT INSTALLED');
-      return null;
-    }
-
-    return await WebViewEnvironment.create(
-      settings: WebViewEnvironmentSettings(
-        userDataFolder:
-            '${Platform.environment['LOCALAPPDATA']}\\PC_POS\\webview',
-      ),
-    );
-  } catch (e, s) {
-    await writeLog('WEBVIEW ENV ERROR: $e');
-    await writeLog(s);
-    return null;
-  }
-}
+import 'utils/device_id_service.dart';
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -158,9 +53,12 @@ void main(List<String> args) async {
   await windowManager.focus();
 
   runApp(
-    const MaterialApp(
+    MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: WebViewPage(),
+      theme: ThemeData(
+        fontFamily: 'Roboto',
+      ),
+      home: const WebViewPage(),
     ),
   );
 
@@ -238,29 +136,31 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   Future<String> loadDeviceId() async {
     final id = await DeviceIdService.getDeviceId();
-    _showDeviceIdAlert(id);
     return id;
   }
 
-  Future<String> getMachineGuid() async {
+  Future<String?> getMachineGuid() async {
     final result = await Process.run(
       'powershell',
       ['(Get-CimInstance Win32_ComputerSystemProduct).UUID'],
     );
 
     if (result.exitCode != 0) {
-      throw Exception(result.stderr);
+      return null;
     }
     final id = result.stdout.toString().trim();
-    _showDeviceIdAlert(id);
     return id;
   }
 
-  void _showDeviceIdAlert(String id) {
+  Future<String> getPhysicalId() async {
+    return await getMachineGuid() ?? await loadDeviceId();
+  }
+
+  void _showDeviceIdAlert({String id = '', String title = 'Device ID'}) {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Device IDssss'),
+        title: Text(title),
         content: SelectableText(id),
         actions: [
           FilledButton(
@@ -392,25 +292,31 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         'update_customer_display',
         data,
       );
-    } catch (_) {
+    } catch (e) {
+      print('PRINTERRR: $e');
+
       secondWindow = null;
       secondWindowId = null;
       await openSecondWindow(initialData: data);
     }
   }
 
-  Future<void> toggleFullScreen() async {
-    // 1. Kiểm tra xem hiện tại có đang fullscreen không
+  Future<void> openMaximumWindow() async {
     await windowManager.maximize();
+  }
 
+  Future<void> openMinimizeWindow() async {
+    await windowManager.minimize();
+  }
+
+  Future<bool> toggleFullScreen() async {
     bool isFull = await windowManager.isFullScreen();
-
-    // 2. Set trạng thái ngược lại
     if (isFull) {
       await windowManager.setFullScreen(false);
     } else {
       await windowManager.setFullScreen(!isFull);
     }
+    return await windowManager.isFullScreen();
   }
 
   Future<void> closeApp() async {
@@ -452,13 +358,23 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: 'get_machine_guid',
-            onPressed: () => getMachineGuid(),
+            onPressed: () async {
+              _showDeviceIdAlert(
+                id: await getMachineGuid() ?? "Unknown Machine GUID",
+                title: 'Machine GUID',
+              );
+            },
             child: const Icon(Icons.memory),
           ),
           const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: 'load_device_id',
-            onPressed: () => loadDeviceId(),
+            onPressed: () async {
+              _showDeviceIdAlert(
+                id: await loadDeviceId(),
+                title: 'Device ID',
+              );
+            },
             child: const Icon(Icons.device_hub),
           ),
         ],
@@ -478,19 +394,42 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             webViewController = controller;
 
             controller.addJavaScriptHandler(
-              handlerName: 'sendToCustomerDisplay',
+              handlerName: HandlerNames.sendToCustomerDisplay,
               callback: (args) async {
-                if (args.isEmpty) return {'ok': false};
-
-                final data = Map<String, dynamic>.from(args.first as Map);
-
+                final data = args.isNotEmpty ? args[0] : {};
                 await sendToCustomerDisplay(data);
-
-                return {'ok': true};
               },
             );
-
-            writeLog('WEBVIEW CREATED');
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.requestDeviceId,
+              callback: (args) async {
+                return await getPhysicalId();
+              },
+            );
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.closeApp,
+              callback: (args) async {
+                await closeApp();
+              },
+            );
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.toggleFullScreen,
+              callback: (args) async {
+                return await toggleFullScreen();
+              },
+            );
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.openMaximumWindow,
+              callback: (args) async {
+                return await openMaximumWindow();
+              },
+            );
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.openMinimizeWindow,
+              callback: (args) async {
+                return await openMinimizeWindow();
+              },
+            );
           },
         ),
       ),

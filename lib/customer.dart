@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:pc_pos/local_image_gallery.dart';
@@ -22,11 +24,14 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     super.initState();
 
     data = Map<String, dynamic>.from(widget.initialData['data'] ?? {});
-
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'update_customer_display') {
+        final newData =
+            jsonDecode(jsonEncode(call.arguments)) as Map<String, dynamic>;
+
+        print('RECEIVED UPDATE: $newData');
         setState(() {
-          data = Map<String, dynamic>.from(call.arguments as Map);
+          data = newData;
         });
       }
 
@@ -64,193 +69,258 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
 
   @override
   Widget build(BuildContext context) {
+    final headers = List<String>.from(data['ordersHeaderTable'] ?? []);
+    final orders = List<Map<String, dynamic>>.from(data['orders'] ?? []);
+    final subFooter = List<Map<String, dynamic>>.from(data['subFooter'] ?? []);
+    final footer = Map<String, dynamic>.from(data['footer'] ?? {});
+
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: Scaffold(
-        backgroundColor: const Color(0xFFF7F7F7),
-        body: Stack(
-          children: [
-            // BACKGROUND: Gallery full màn hình
-            const Positioned.fill(
-              child: LocalImageGallery(),
-            ),
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          fontFamily: 'Roboto',
+        ),
+        home: Scaffold(
+            backgroundColor: const Color(0xFFF7F7F7),
+            body: Stack(children: [
+              // BACKGROUND: Gallery full màn hình
+              const Positioned.fill(
+                child: LocalImageGallery(),
+              ),
 
-            // HEADER overlay
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: 56,
-              child: Container(
-                color: const Color(0xFF01102A),
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.storefront,
-                      color: Colors.white,
-                      size: 28,
+              // HEADER overlay
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 56,
+                child: Container(
+                  color: const Color(0xFF01102A),
+                  child: Center(
+                    child: Image.asset(
+                      'assets/headerLogo.png',
+                      height: 36,
+                      fit: BoxFit.contain,
                     ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'Customer Display',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      'Table: $tableNo',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
 
-            // RIGHT ORDER LIST overlay
-            Positioned(
-              top: 56,
-              right: 0,
-              bottom: 0,
-              width: 440,
-              child: Container(
-                padding: const EdgeInsets.all(18),
-                color: Colors.white.withValues(alpha: 0.94),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'Order List',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: items.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'No items',
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w600,
+              // RIGHT ORDER LIST overlay
+              Positioned(
+                top: 56,
+                right: 0,
+                bottom: 0,
+                width: 440,
+                child: Container(
+                    color: Colors.white,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _header(headers),
+                        Expanded(
+                          flex: 1,
+                          child: ListView.separated(
+                            padding: EdgeInsets.zero,
+                            itemCount: orders.length,
+                            separatorBuilder: (_, __) => const Divider(
+                              height: 0,
+                              thickness: 0,
+                              color: Color(0xFFE5E7EB),
+                            ),
+                            itemBuilder: (context, index) {
+                              final order = orders[index];
+
+                              return Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: const BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.all(
+                                    Radius.circular(4),
+                                  ),
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: Color(0xFFE5E8EB),
+                                      width: 1,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            )
-                          : ListView.separated(
-                              padding: EdgeInsets.zero,
-                              itemCount: items.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 10),
-                              itemBuilder: (context, index) {
-                                final item = items[index];
-
-                                final name = '${item['name'] ?? '-'}';
-                                final qty = item['qty'] ?? 0;
-                                final price = item['price'] ?? 0;
-
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 12,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(14),
-                                    boxShadow: const [
-                                      BoxShadow(
-                                        blurRadius: 8,
-                                        offset: Offset(0, 3),
-                                        color: Color(0x12000000),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          name,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'x$qty',
+                                child: Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 20,
+                                      child: Text(
+                                        '${index + 1}.',
                                         style: const TextStyle(
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w600,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          height: 16 / 12,
+                                          color: Color(0xFF191919),
                                         ),
                                       ),
-                                      const SizedBox(width: 12),
-                                      SizedBox(
-                                        width: 110,
-                                        child: Text(
-                                          formatMoney(price),
-                                          textAlign: TextAlign.right,
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
+                                    ),
+                                    SizedBox(
+                                      width: 12,
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        '${order['name'] ?? ''}',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          height: 16 / 12,
+                                          color: Color(0xFF191919),
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 18,
-                      ),
-                      color: Colors.black,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text(
-                            'TOTAL',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
+                                    ),
+                                    SizedBox(
+                                      width: 12,
+                                    ),
+                                    SizedBox(
+                                      width: 30,
+                                      child: Text(
+                                        'x${order['qty'] ?? ''}',
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          height: 16 / 12,
+                                          color: Color(0xFF191919),
+                                        ),
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 12,
+                                    ),
+                                    SizedBox(
+                                      width: 80,
+                                      child: Text(
+                                        '${order['price'] ?? ''}',
+                                        textAlign: TextAlign.right,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          height: 16 / 12,
+                                          color: Color(0xFF1672DF),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            formatMoney(total),
-                            textAlign: TextAlign.right,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                        ),
+                        _summary(subFooter, footer),
+                      ],
+                    )),
               ),
+            ])));
+  }
+
+  Widget _header(List<String> headers) {
+    return Container(
+      height: 40,
+      color: const Color(0xFFF2F2F2),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              headers.isNotEmpty ? headers[0] : '',
+              style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF191919)),
             ),
-          ],
+          ),
+          SizedBox(
+            width: 30,
+            child: Text(
+              headers.length > 1 ? headers[1] : '',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF191919)),
+            ),
+          ),
+          SizedBox(
+            width: 80,
+            child: Text(
+              headers.length > 2 ? headers[2] : '',
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF191919)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summary(
+    List<Map<String, dynamic>> subFooter,
+    Map<String, dynamic> footer,
+  ) {
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: Color(0xFFE5E8EB)),
         ),
       ),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+      child: Column(
+        children: [
+          ...subFooter.map(
+            (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _summaryRow(
+                  '${item['title'] ?? ''}',
+                  '${item['value'] ?? ''}',
+                )),
+          ),
+          const SizedBox(height: 8),
+          const Divider(height: 1, color: Color(0xFFE5E7EB)),
+          const SizedBox(height: 16),
+          _summaryRow(
+            '${footer['title'] ?? ''}',
+            '${footer['value'] ?? ''}',
+            isTotal: true,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryRow(
+    String label,
+    String value, {
+    bool isTotal = false,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: isTotal ? 13 : 12,
+              fontWeight: FontWeight.w400,
+              color:
+                  isTotal ? const Color(0xFF191919) : const Color(0xFF4C4C4C),
+            ),
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: isTotal ? 14 : 12,
+            fontWeight: isTotal ? FontWeight.w500 : FontWeight.w400,
+            color: const Color(0xFF191919),
+          ),
+        ),
+      ],
     );
   }
 }
