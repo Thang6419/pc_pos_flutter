@@ -23,7 +23,6 @@ void main(List<String> args) async {
 
     final argument = args.length > 2 && args[2].isNotEmpty ? args[2] : '{}';
     final data = jsonDecode(argument) as Map<String, dynamic>;
-
     runApp(
       CustomerDisplayApp(
         initialData: data,
@@ -85,6 +84,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   WebViewEnvironment? env;
   InAppWebViewController? webViewController;
+  bool _isOpeningSecondWindow = false;
+  Map<String, dynamic>? _latestCustomerDisplayData;
 
   String? deviceId;
   bool isLoading = false;
@@ -215,89 +216,108 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   Future<void> openSecondWindow({
     Map<String, dynamic>? initialData,
   }) async {
-    if (secondWindowId != null) {
-      final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
-      if (subWindowIds.contains(secondWindowId)) {
-        try {
-          await secondWindow!.show();
-          return;
-        } catch (_) {
-          secondWindow = null;
-          secondWindowId = null;
+    if (_isOpeningSecondWindow) return;
+
+    _isOpeningSecondWindow = true;
+
+    try {
+      if (secondWindowId != null) {
+        final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
+        if (subWindowIds.contains(secondWindowId)) {
+          try {
+            await secondWindow!.show();
+            return;
+          } catch (_) {
+            secondWindow = null;
+            secondWindowId = null;
+          }
         }
       }
-    }
 
-    final targetDisplay = await _getOtherDisplay();
-    if (targetDisplay == null) {
-      await writeLog('NO SECOND DISPLAY');
-      return;
-    }
+      final targetDisplay = await _getOtherDisplay();
+      if (targetDisplay == null) {
+        await writeLog('NO SECOND DISPLAY');
+        return;
+      }
 
-    // 1. Lấy vị trí và kích thước gốc của màn hình phụ
-    final pos = targetDisplay.visiblePosition ?? Offset.zero;
-    final size = targetDisplay.size;
+      // 1. Lấy vị trí và kích thước gốc của màn hình phụ
+      final pos = targetDisplay.visiblePosition ?? Offset.zero;
+      final size = targetDisplay.size;
 
-    // 2. Lấy tỉ lệ Scale (DPI) thực tế của màn hình phụ (Mặc định là 1.0 nếu lỗi)
+      // 2. Lấy tỉ lệ Scale (DPI) thực tế của màn hình phụ (Mặc định là 1.0 nếu lỗi)
 // Thêm .toDouble() vào cuối để ép kiểu sang double một cách an toàn
-    final double scaleFactor = (targetDisplay.scaleFactor ?? 1.0).toDouble();
-    // 3. Tính toán bù trừ phần hụt (Do thanh Titlebar ẩn kích thước khoảng 32px-40px)
-    // Nếu màn hình bị scale, ta phải chia tọa độ cho scaleFactor để ép Windows kéo dãn đúng tỉ lệ
-    final double titleBarHeight =
-        40.0; // Tăng lên 40px để che triệt để thanh tiêu đề
-    final double extraEdge =
-        8.0; // Phần rìa bóng ẩn của Windows (Drop Shadow border)
+      final double scaleFactor = (targetDisplay.scaleFactor ?? 1.0).toDouble();
+      // 3. Tính toán bù trừ phần hụt (Do thanh Titlebar ẩn kích thước khoảng 32px-40px)
+      // Nếu màn hình bị scale, ta phải chia tọa độ cho scaleFactor để ép Windows kéo dãn đúng tỉ lệ
+      final double titleBarHeight =
+          40.0; // Tăng lên 40px để che triệt để thanh tiêu đề
+      final double extraEdge =
+          8.0; // Phần rìa bóng ẩn của Windows (Drop Shadow border)
 
-    final frame = Rect.fromLTWH(
-      pos.dx - extraEdge, // Tràn sang trái một chút để khít viền
-      pos.dy -
-          titleBarHeight, // Đẩy hẳn thanh tiêu đề lên trên out khỏi màn hình
-      size.width + (extraEdge * 2), // Bù chiều rộng tràn sang 2 bên
-      size.height +
-          titleBarHeight +
-          extraEdge, // Bù chiều cao để đẩy sát xuống đáy màn hình
-    );
+      final frame = Rect.fromLTWH(
+        pos.dx - extraEdge, // Tràn sang trái một chút để khít viền
+        pos.dy -
+            titleBarHeight, // Đẩy hẳn thanh tiêu đề lên trên out khỏi màn hình
+        size.width + (extraEdge * 2), // Bù chiều rộng tràn sang 2 bên
+        size.height +
+            titleBarHeight +
+            extraEdge, // Bù chiều cao để đẩy sát xuống đáy màn hình
+      );
 
-    final window = await DesktopMultiWindow.createWindow(
-      jsonEncode({
-        'type': 'customer_display',
-        'data': initialData ?? {},
-      }),
-    );
-    await window.setTitle('Customer Display');
+      final window = await DesktopMultiWindow.createWindow(
+        jsonEncode({
+          'type': 'customer_display',
+          'data': initialData ?? {},
+        }),
+      );
+      await window.setTitle('Customer Display');
 
-    setState(() {
-      secondWindow = window;
-      secondWindowId = window.windowId;
-    });
+      setState(() {
+        secondWindow = window;
+        secondWindowId = window.windowId;
+      });
 
-    // 4. Áp khung hình chuẩn đã tính toán
-    await window.setFrame(frame);
+      // 4. Áp khung hình chuẩn đã tính toán
+      await window.setFrame(frame);
 
-    // 5. Hiển thị màn hình phụ
-    await window.show();
+      // 5. Hiển thị màn hình phụ
+      await window.show();
 
-    await writeLog('SECOND WINDOW FORCED FULLSCREEN WITH SCALE: $scaleFactor');
+      await Future.delayed(const Duration(seconds: 1));
+
+      await writeLog(
+          'SECOND WINDOW FORCED FULLSCREEN WITH SCALE: $scaleFactor');
+    } catch (e) {
+      print('PRINTERRRssssssssssssssssss: $e');
+    } finally {
+      _isOpeningSecondWindow = false;
+    }
   }
 
   Future<void> sendToCustomerDisplay(Map<String, dynamic> data) async {
-    if (secondWindowId == null) {
-      await openSecondWindow(initialData: data);
-      return;
-    }
-
     try {
+      _latestCustomerDisplayData = data;
+
+      if (_isOpeningSecondWindow) return;
+
+      if (secondWindowId == null ||
+          !(await DesktopMultiWindow.getAllSubWindowIds())
+              .contains(secondWindowId)) {
+        await openSecondWindow();
+      }
+
+      if (secondWindowId == null) return;
+
+      final latest = _latestCustomerDisplayData;
+      if (latest == null) return;
+
       await DesktopMultiWindow.invokeMethod(
         secondWindowId!,
         'update_customer_display',
-        data,
+        jsonEncode(latest),
       );
     } catch (e) {
-      print('PRINTERRR: $e');
-
-      secondWindow = null;
-      secondWindowId = null;
-      await openSecondWindow(initialData: data);
+      print('gfdfgdfgdfgdfgdfgdfg: $e');
     }
   }
 

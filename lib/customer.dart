@@ -19,17 +19,49 @@ class CustomerDisplayApp extends StatefulWidget {
 class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Map<String, dynamic> data = {};
 
+  Map<String, dynamic> _asStringKeyMap(dynamic value) {
+    if (value is String && value.isNotEmpty) {
+      final decoded = jsonDecode(value);
+      return _asStringKeyMap(decoded);
+    }
+
+    if (value is Map) {
+      return value.map(
+        (key, value) => MapEntry('$key', _normalizeJsonValue(value)),
+      );
+    }
+
+    return {};
+  }
+
+  dynamic _normalizeJsonValue(dynamic value) {
+    if (value is Map) {
+      return value.map(
+        (key, value) => MapEntry('$key', _normalizeJsonValue(value)),
+      );
+    }
+
+    if (value is List) {
+      return value.map(_normalizeJsonValue).toList();
+    }
+
+    return value;
+  }
+
+  List<Map<String, dynamic>> _asMapList(dynamic value) {
+    if (value is! List) return [];
+
+    return value.map(_asStringKeyMap).toList();
+  }
+
   @override
   void initState() {
     super.initState();
 
-    data = Map<String, dynamic>.from(widget.initialData['data'] ?? {});
+    data = _asStringKeyMap(widget.initialData['data']);
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'update_customer_display') {
-        final newData =
-            jsonDecode(jsonEncode(call.arguments)) as Map<String, dynamic>;
-
-        print('RECEIVED UPDATE: $newData');
+        final newData = _asStringKeyMap(call.arguments);
         setState(() {
           data = newData;
         });
@@ -44,10 +76,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
 
     if (rawItems is! List) return [];
 
-    return rawItems
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
+    return _asMapList(rawItems);
   }
 
   int get total {
@@ -69,10 +98,12 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
 
   @override
   Widget build(BuildContext context) {
-    final headers = List<String>.from(data['ordersHeaderTable'] ?? []);
-    final orders = List<Map<String, dynamic>>.from(data['orders'] ?? []);
-    final subFooter = List<Map<String, dynamic>>.from(data['subFooter'] ?? []);
-    final footer = Map<String, dynamic>.from(data['footer'] ?? {});
+    final headers =
+        (data['ordersHeaderTable'] as List?)?.map((item) => '$item').toList() ??
+            [];
+    final orders = _asMapList(data['orders']);
+    final subFooter = _asMapList(data['subFooter']);
+    final footer = _asStringKeyMap(data['footer']);
 
     return MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -234,6 +265,9 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
             ),
           ),
           SizedBox(
+            width: 12,
+          ),
+          SizedBox(
             width: 30,
             child: Text(
               headers.length > 1 ? headers[1] : '',
@@ -243,6 +277,9 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
                   fontWeight: FontWeight.w500,
                   color: Color(0xFF191919)),
             ),
+          ),
+          SizedBox(
+            width: 12,
           ),
           SizedBox(
             width: 80,
