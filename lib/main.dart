@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:pc_pos/customer.dart';
@@ -344,6 +345,24 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     await windowManager.close();
   }
 
+  Future<void> _printViaPureSocket({
+    required String ip,
+    required String html,
+    int port = 9100,
+  }) async {
+    final printer = HtmlReceiptPrinter(
+      context: context,
+      receiptWidth: 576,
+      paperSize: PaperSize.mm80,
+    );
+
+    await printer.printHtml(
+      html: html,
+      ip: ip,
+      port: port,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading || env == null) {
@@ -356,7 +375,14 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const PrinterFloatingAction(),
+          FloatingActionButton(
+            heroTag: 'print_test',
+            onPressed: () => _printViaPureSocket(
+              ip: '192.168.0.240', // Replace with actual IP
+              html: ReceiptTemplate.receiptHtml, // Replace with actual HTML
+            ),
+            child: const Icon(Icons.print),
+          ),
           const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: 'open_second_window',
@@ -448,6 +474,39 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
               handlerName: HandlerNames.openMinimizeWindow,
               callback: (args) async {
                 return await openMinimizeWindow();
+              },
+            );
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.print,
+              callback: (args) async {
+                final data = Map<String, dynamic>.from(args.first as Map);
+
+                final ip = data['ip']?.toString() ?? '';
+                final port = int.tryParse(data['port'].toString()) ?? 9100;
+                final html = data['html']?.toString() ?? '';
+
+                if (ip.isEmpty || html.isEmpty) {
+                  return {
+                    'success': false,
+                    'message': 'Thiếu ip hoặc html',
+                  };
+                }
+
+                final printer = HtmlReceiptPrinter(
+                  context: context,
+                  receiptWidth: 576,
+                  paperSize: PaperSize.mm80,
+                );
+
+                await printer.printHtml(
+                  ip: ip,
+                  port: port,
+                  html: html,
+                );
+
+                return {
+                  'success': true,
+                };
               },
             );
           },
