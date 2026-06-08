@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
@@ -95,6 +96,7 @@ void main(List<String> args) async {
 
   await windowManager.show();
   await windowManager.focus();
+  await windowManager.setPreventClose(true);
 
   runApp(
     MaterialApp(
@@ -199,6 +201,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   WebViewEnvironment? env;
   InAppWebViewController? webViewController;
   bool _isOpeningSecondWindow = false;
+  bool _isClosingApp = false;
   Map<String, dynamic>? _latestCustomerDisplayData;
 
   String? deviceId;
@@ -222,9 +225,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   @override
   void onWindowClose() {
-    // Avoid calling desktop_multi_window while the main window is closing.
-    // On some machines the sub-window can already be destroyed, and querying
-    // the native plugin during shutdown can terminate the process.
+    unawaited(closeApp());
   }
 
   Future<void> init() async {
@@ -469,7 +470,37 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   Future<void> closeApp() async {
     // Hàm này sẽ đóng cửa sổ ứng dụng ngay lập tức
-    await windowManager.close();
+    if (_isClosingApp) return;
+    _isClosingApp = true;
+
+    await writeLog('APP CLOSE START');
+
+    try {
+      windowManager.removeListener(this);
+
+      final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
+      await writeLog('APP CLOSE SUB WINDOWS: $subWindowIds');
+
+      for (final id in subWindowIds) {
+        try {
+          await WindowController.fromWindowId(id).close();
+          await writeLog('APP CLOSE SUB WINDOW DONE: $id');
+        } catch (e) {
+          await writeLog('APP CLOSE SUB WINDOW ERROR: id=$id, error=$e');
+        }
+      }
+
+      secondWindow = null;
+      secondWindowId = null;
+      webViewController = null;
+
+      await Future.delayed(const Duration(milliseconds: 300));
+      await writeLog('APP CLOSE PROCESS EXIT');
+      exit(0);
+    } catch (e) {
+      await writeLog('APP CLOSE ERROR: $e');
+      exit(0);
+    }
   }
 
   Future<void> _printViaPureSocket({
