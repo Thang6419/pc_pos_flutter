@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:pc_pos/customer.dart';
 import 'package:pc_pos/printer.dart';
+import 'package:pc_pos/services/app_update_service.dart';
 import 'package:pc_pos/utils/common.dart';
 import 'package:pc_pos/utils/contanst.dart';
 import 'package:screen_retriever/screen_retriever.dart';
@@ -97,6 +98,7 @@ void main(List<String> args) async {
 
   runApp(
     MaterialApp(
+      navigatorKey: appUpdateNavigatorKey,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         fontFamily: 'Roboto',
@@ -107,6 +109,7 @@ void main(List<String> args) async {
 
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     await Future.delayed(const Duration(milliseconds: 500));
+    await AppUpdateService.instance.start();
     await windowManager.setResizable(true);
     await windowManager.setMaximizable(true);
     // await windowManager.maximize();
@@ -218,20 +221,10 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   @override
-  @override
-  void onWindowClose() async {
-    if (secondWindowId != null) {
-      // Lấy danh sách các window phụ đang chạy
-      final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
-      // Nếu ID lưu trữ không còn nằm trong danh sách subWindowIds nữa tức là đã bị user tắt
-      if (!subWindowIds.contains(secondWindowId)) {
-        setState(() {
-          secondWindow = null;
-          secondWindowId = null;
-        });
-        await writeLog('SECOND WINDOW CLOSED BY USER - RESET STATE');
-      }
-    }
+  void onWindowClose() {
+    // Avoid calling desktop_multi_window while the main window is closing.
+    // On some machines the sub-window can already be destroyed, and querying
+    // the native plugin during shutdown can terminate the process.
   }
 
   Future<void> init() async {

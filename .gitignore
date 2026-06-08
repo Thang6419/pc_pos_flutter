@@ -49,6 +49,7 @@ app.*.map.json
 
 # Inno Setup builds
 Output/
+dsa_priv.pem
 *.exe
 MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 /MicrosoftEdgeWebView2RuntimeInstallerX64.exe

@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  auto_updater_windows
   charset_converter
   desktop_multi_window
   flutter_inappwebview_windows
