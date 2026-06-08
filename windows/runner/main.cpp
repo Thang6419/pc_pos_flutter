@@ -5,6 +5,43 @@
 #include "flutter_window.h"
 #include "utils.h"
 
+extern "C" void DesktopMultiWindowSetWindowCreatedCallback(
+    void (*callback)(void *flutter_view_controller));
+
+namespace
+{
+void ConfigureSecondaryWindow(void *flutter_view_controller)
+{
+  auto *controller =
+      reinterpret_cast<flutter::FlutterViewController *>(flutter_view_controller);
+  if (!controller || !controller->view())
+  {
+    return;
+  }
+
+  HWND content = controller->view()->GetNativeWindow();
+  HWND window = ::GetAncestor(content, GA_ROOT);
+  if (!window)
+  {
+    return;
+  }
+
+  LONG_PTR style = ::GetWindowLongPtr(window, GWL_STYLE);
+  style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX |
+             WS_SYSMENU);
+  style |= WS_POPUP;
+  ::SetWindowLongPtr(window, GWL_STYLE, style);
+
+  LONG_PTR ex_style = ::GetWindowLongPtr(window, GWL_EXSTYLE);
+  ex_style |= WS_EX_TOPMOST;
+  ::SetWindowLongPtr(window, GWL_EXSTYLE, ex_style);
+
+  ::SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
+}
+} // namespace
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command)
 {
@@ -20,6 +57,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
   flutter::DartProject project(L"data");
+  DesktopMultiWindowSetWindowCreatedCallback(ConfigureSecondaryWindow);
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();

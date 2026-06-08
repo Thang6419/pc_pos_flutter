@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:pc_pos/customer.dart';
@@ -10,9 +12,50 @@ import 'package:pc_pos/printer.dart';
 import 'package:pc_pos/utils/common.dart';
 import 'package:pc_pos/utils/contanst.dart';
 import 'package:screen_retriever/screen_retriever.dart';
+import 'package:win32/win32.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'utils/device_id_service.dart';
+
+const _customerDisplayTitle = 'Customer Display';
+int _customerDisplayHwndAddress = 0;
+
+int _enumCustomerDisplayWindow(Pointer hwndPointer, int lParam) {
+  final hwnd = HWND(hwndPointer);
+  final processId = calloc<Uint32>();
+  final className = wsalloc(256);
+  final title = wsalloc(256);
+
+  try {
+    GetWindowThreadProcessId(hwnd, processId);
+    if (processId.value != pid) return TRUE;
+
+    GetClassName(hwnd, className, 256);
+    GetWindowText(hwnd, title, 256);
+
+    if (className.toDartString() == 'FlutterMultiWindow' ||
+        title.toDartString() == _customerDisplayTitle) {
+      _customerDisplayHwndAddress = hwnd.address;
+      return FALSE;
+    }
+
+    return TRUE;
+  } finally {
+    calloc.free(processId);
+    free(className);
+    free(title);
+  }
+}
+
+HWND _findCustomerDisplayHwnd() {
+  _customerDisplayHwndAddress = 0;
+  final enumProc = Pointer.fromFunction<WNDENUMPROC>(
+    _enumCustomerDisplayWindow,
+    FALSE,
+  );
+  EnumWindows(enumProc, const LPARAM(0));
+  return HWND(Pointer.fromAddress(_customerDisplayHwndAddress));
+}
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,6 +112,73 @@ void main(List<String> args) async {
     // await windowManager.maximize();
     await windowManager.setFullScreen(true);
   });
+}
+
+Future<void> forceCustomerDisplayFullScreen(Display targetDisplay) async {
+  if (!Platform.isWindows) return;
+
+  final scaleFactor = (targetDisplay.scaleFactor ?? 1.0).toDouble();
+  final logicalPosition = targetDisplay.visiblePosition ?? Offset.zero;
+  final logicalSize = targetDisplay.size;
+
+  final monitorPoint = calloc<POINT>();
+  final monitorInfo = calloc<MONITORINFO>();
+
+  try {
+    monitorPoint.ref.x =
+        (logicalPosition.dx * scaleFactor + logicalSize.width * scaleFactor / 2)
+            .round();
+    monitorPoint.ref.y = (logicalPosition.dy * scaleFactor +
+            logicalSize.height * scaleFactor / 2)
+        .round();
+
+    final hwnd = _findCustomerDisplayHwnd();
+    if (hwnd.address == 0) {
+      await writeLog('CUSTOMER DISPLAY HWND NOT FOUND');
+      return;
+    }
+    await writeLog('CUSTOMER DISPLAY HWND: ${hwnd.address}');
+
+    final style = GetWindowLongPtr(hwnd, GWL_STYLE).value;
+    SetWindowLongPtr(
+      hwnd,
+      GWL_STYLE,
+      (style &
+              ~(WS_CAPTION |
+                  WS_THICKFRAME |
+                  WS_MINIMIZEBOX |
+                  WS_MAXIMIZEBOX |
+                  WS_SYSMENU)) |
+          WS_POPUP,
+    );
+
+    final exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE).value;
+    SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TOPMOST);
+
+    monitorInfo.ref.cbSize = sizeOf<MONITORINFO>();
+    final monitor =
+        MonitorFromPoint(monitorPoint.ref, MONITOR_DEFAULTTONEAREST);
+    if (!GetMonitorInfo(monitor, monitorInfo)) {
+      await writeLog('CUSTOMER DISPLAY MONITOR INFO FAILED');
+      return;
+    }
+
+    final rect = monitorInfo.ref.rcMonitor;
+    SetWindowPos(
+      hwnd,
+      HWND_TOPMOST,
+      rect.left,
+      rect.top,
+      rect.right - rect.left,
+      rect.bottom - rect.top,
+      SWP_FRAMECHANGED,
+    );
+  } catch (e) {
+    await writeLog('FORCE CUSTOMER DISPLAY FULLSCREEN ERROR: $e');
+  } finally {
+    calloc.free(monitorPoint);
+    calloc.free(monitorInfo);
+  }
 }
 
 class WebViewPage extends StatefulWidget {
@@ -176,10 +286,19 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   Future<Display?> _getOtherDisplay() async {
     final displays = await screenRetriever.getAllDisplays();
+    await writeLog('DISPLAY COUNT: ${displays.length}');
+    for (final display in displays) {
+      await writeLog(
+        'DISPLAY: id=${display.id}, name=${display.name}, '
+        'visiblePosition=${display.visiblePosition}, size=${display.size}, '
+        'visibleSize=${display.visibleSize}, scale=${display.scaleFactor}',
+      );
+    }
 
     if (displays.length < 2) return null;
 
     final mainBounds = await windowManager.getBounds();
+    await writeLog('MAIN WINDOW BOUNDS: $mainBounds');
     final mainCenter = Offset(
       mainBounds.left + mainBounds.width / 2,
       mainBounds.top + mainBounds.height / 2,
@@ -205,65 +324,73 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     }
 
     if (currentDisplay == null) {
+      await writeLog('CURRENT DISPLAY NOT FOUND, FALLBACK DISPLAY[1]');
       return displays[1];
     }
 
-    return displays.firstWhere(
+    final otherDisplay = displays.firstWhere(
       (display) => display.id != currentDisplay!.id,
       orElse: () => displays[1],
     );
+    await writeLog(
+        'CURRENT DISPLAY: ${currentDisplay.id}, OTHER DISPLAY: ${otherDisplay.id}');
+    return otherDisplay;
   }
 
   Future<void> openSecondWindow({
     Map<String, dynamic>? initialData,
   }) async {
-    if (_isOpeningSecondWindow) return;
+    if (_isOpeningSecondWindow) {
+      await writeLog('OPEN SECOND WINDOW SKIPPED: already opening');
+      return;
+    }
 
     _isOpeningSecondWindow = true;
 
     try {
+      await writeLog('OPEN SECOND WINDOW START');
+      final targetDisplay = await _getOtherDisplay();
+      if (targetDisplay == null) {
+        await writeLog('NO SECOND DISPLAY');
+        return;
+      }
+      await writeLog(
+        'TARGET DISPLAY: id=${targetDisplay.id}, name=${targetDisplay.name}, '
+        'visiblePosition=${targetDisplay.visiblePosition}, '
+        'size=${targetDisplay.size}, visibleSize=${targetDisplay.visibleSize}, '
+        'scale=${targetDisplay.scaleFactor}',
+      );
+
       if (secondWindowId != null) {
         final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
+        await writeLog(
+            'EXISTING SECOND WINDOW: id=$secondWindowId, subWindows=$subWindowIds');
         if (subWindowIds.contains(secondWindowId)) {
           try {
             await secondWindow!.show();
+            await Future.delayed(const Duration(milliseconds: 300));
+            await forceCustomerDisplayFullScreen(targetDisplay);
+            await writeLog('EXISTING SECOND WINDOW SHOWN');
             return;
-          } catch (_) {
+          } catch (e) {
+            await writeLog('EXISTING SECOND WINDOW SHOW ERROR: $e');
             secondWindow = null;
             secondWindowId = null;
           }
         }
       }
 
-      final targetDisplay = await _getOtherDisplay();
-      if (targetDisplay == null) {
-        await writeLog('NO SECOND DISPLAY');
-        return;
-      }
-
       // 1. Lấy vị trí và kích thước gốc của màn hình phụ
       final pos = targetDisplay.visiblePosition ?? Offset.zero;
       final size = targetDisplay.size;
-
-      // 2. Lấy tỉ lệ Scale (DPI) thực tế của màn hình phụ (Mặc định là 1.0 nếu lỗi)
-// Thêm .toDouble() vào cuối để ép kiểu sang double một cách an toàn
-      final double scaleFactor = (targetDisplay.scaleFactor ?? 1.0).toDouble();
-      // 3. Tính toán bù trừ phần hụt (Do thanh Titlebar ẩn kích thước khoảng 32px-40px)
-      // Nếu màn hình bị scale, ta phải chia tọa độ cho scaleFactor để ép Windows kéo dãn đúng tỉ lệ
-      final double titleBarHeight =
-          40.0; // Tăng lên 40px để che triệt để thanh tiêu đề
-      final double extraEdge =
-          8.0; // Phần rìa bóng ẩn của Windows (Drop Shadow border)
-
+      final scaleFactor = (targetDisplay.scaleFactor ?? 1.0).toDouble();
       final frame = Rect.fromLTWH(
-        pos.dx - extraEdge, // Tràn sang trái một chút để khít viền
-        pos.dy -
-            titleBarHeight, // Đẩy hẳn thanh tiêu đề lên trên out khỏi màn hình
-        size.width + (extraEdge * 2), // Bù chiều rộng tràn sang 2 bên
-        size.height +
-            titleBarHeight +
-            extraEdge, // Bù chiều cao để đẩy sát xuống đáy màn hình
+        pos.dx * scaleFactor,
+        pos.dy * scaleFactor,
+        size.width * scaleFactor,
+        size.height * scaleFactor,
       );
+      await writeLog('CREATE SECOND WINDOW FRAME: $frame SCALE: $scaleFactor');
 
       final window = await DesktopMultiWindow.createWindow(
         jsonEncode({
@@ -271,6 +398,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           'data': initialData ?? {},
         }),
       );
+      await writeLog('SECOND WINDOW CREATED: id=${window.windowId}');
       await window.setTitle('Customer Display');
 
       setState(() {
@@ -278,17 +406,22 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         secondWindowId = window.windowId;
       });
 
-      // 4. Áp khung hình chuẩn đã tính toán
       await window.setFrame(frame);
+      await writeLog('SECOND WINDOW SET FRAME DONE');
 
-      // 5. Hiển thị màn hình phụ
       await window.show();
+      await writeLog('SECOND WINDOW SHOW DONE');
 
-      await Future.delayed(const Duration(seconds: 1));
+      await Future.delayed(const Duration(milliseconds: 300));
+      await forceCustomerDisplayFullScreen(targetDisplay);
+      await Future.delayed(const Duration(milliseconds: 300));
+      await forceCustomerDisplayFullScreen(targetDisplay);
+      await Future.delayed(const Duration(milliseconds: 700));
 
       await writeLog(
-          'SECOND WINDOW FORCED FULLSCREEN WITH SCALE: $scaleFactor');
+          'SECOND WINDOW FULLSCREEN FRAME: $frame SCALE: $scaleFactor');
     } catch (e) {
+      await writeLog('OPEN SECOND WINDOW ERROR: $e');
       print('PRINTERRRssssssssssssssssss: $e');
     } finally {
       _isOpeningSecondWindow = false;
