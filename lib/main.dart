@@ -231,6 +231,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     await writeLog('INIT WEBVIEW PAGE');
 
     final result = await createWebViewEnv();
+    await writeLog('WEBVIEW ENV RESULT: ${result == null ? 'null' : 'ready'}');
 
     if (!mounted) return;
 
@@ -533,7 +534,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             onPressed: () async {
               _showDeviceIdAlert(
                 id: await getMachineGuid() ?? "Unknown Machine GUID",
-                title: 'Machine GUID',
+                title: 'Machine GUIDS',
               );
             },
             child: const Icon(Icons.memory),
@@ -562,7 +563,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             mediaPlaybackRequiresUserGesture: false,
             allowsInlineMediaPlayback: true,
           ),
-          onWebViewCreated: (controller) {
+          onWebViewCreated: (controller) async {
+            await writeLog('WEBVIEW CREATED');
             webViewController = controller;
 
             controller.addJavaScriptHandler(
@@ -634,6 +636,31 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
                   'success': true,
                 };
               },
+            );
+          },
+          onLoadStart: (controller, url) async {
+            await writeLog('WEBVIEW LOAD START: $url');
+          },
+          onLoadStop: (controller, url) async {
+            await writeLog('WEBVIEW LOAD STOP: $url');
+          },
+          onReceivedError: (controller, request, error) async {
+            await writeLog(
+              'WEBVIEW LOAD ERROR: url=${request.url}, '
+              'code=${error.type}, desc=${error.description}',
+            );
+          },
+          onReceivedHttpError: (controller, request, errorResponse) async {
+            await writeLog(
+              'WEBVIEW HTTP ERROR: url=${request.url}, '
+              'status=${errorResponse.statusCode}, '
+              'reason=${errorResponse.reasonPhrase}',
+            );
+          },
+          onConsoleMessage: (controller, consoleMessage) async {
+            await writeLog(
+              'WEBVIEW CONSOLE: ${consoleMessage.messageLevel} '
+              '${consoleMessage.message}',
             );
           },
         ),

@@ -87,6 +87,7 @@ Future<void> writeLog(Object? message) async {
 
 Future<WebViewEnvironment?> createWebViewEnv() async {
   try {
+    await writeLog('CHECK WEBVIEW2 VERSION');
     final version = await WebViewEnvironment.getAvailableVersion();
 
     if (version == null) {
@@ -94,12 +95,16 @@ Future<WebViewEnvironment?> createWebViewEnv() async {
       return null;
     }
 
-    return await WebViewEnvironment.create(
+    await writeLog('WEBVIEW2 VERSION: $version');
+
+    final env = await WebViewEnvironment.create(
       settings: WebViewEnvironmentSettings(
         userDataFolder:
             '${Platform.environment['LOCALAPPDATA']}\\PC_POS\\webview',
       ),
     );
+    await writeLog('WEBVIEW ENV CREATED');
+    return env;
   } catch (e, s) {
     await writeLog('WEBVIEW ENV ERROR: $e');
     await writeLog(s);
