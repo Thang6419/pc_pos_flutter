@@ -450,6 +450,29 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     }
   }
 
+  Future<void> showCustomerQr(String? value) async {
+    final qrValue = value?.trim() ?? '';
+
+    try {
+      if (qrValue.isNotEmpty &&
+          (secondWindowId == null ||
+              !(await DesktopMultiWindow.getAllSubWindowIds())
+                  .contains(secondWindowId))) {
+        await openSecondWindow();
+      }
+
+      if (secondWindowId == null) return;
+
+      await DesktopMultiWindow.invokeMethod(
+        secondWindowId!,
+        'show_customer_qr',
+        qrValue,
+      );
+    } catch (e) {
+      await writeLog('SHOW CUSTOMER QR ERROR: $e');
+    }
+  }
+
   Future<void> openMaximumWindow() async {
     await windowManager.maximize();
   }
@@ -581,6 +604,22 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             },
             child: const Icon(Icons.device_hub),
           ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'show_qr',
+            onPressed: () async {
+              showCustomerQr('https://example.com');
+            },
+            child: const Icon(Icons.qr_code),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'close_qr',
+            onPressed: () async {
+              showCustomerQr('');
+            },
+            child: const Icon(Icons.qr_code),
+          ),
         ],
       ),
       body: SafeArea(
@@ -606,6 +645,13 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
               },
             );
             controller.addJavaScriptHandler(
+              handlerName: HandlerNames.showCustomerQr,
+              callback: (args) async {
+                final value = args.isNotEmpty ? args[0]?.toString() : null;
+                await showCustomerQr(value);
+              },
+            );
+            controller.addJavaScriptHandler(
               handlerName: HandlerNames.requestDeviceId,
               callback: (args) async {
                 return await getPhysicalId();
@@ -615,6 +661,18 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
               handlerName: HandlerNames.closeApp,
               callback: (args) async {
                 await closeApp();
+              },
+            );
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.getPlatform,
+              callback: (args) async {
+                if (Platform.isWindows) return 'windows';
+                if (Platform.isAndroid) return 'android';
+                if (Platform.isIOS) return 'ios';
+                if (Platform.isMacOS) return 'macos';
+                if (Platform.isLinux) return 'linux';
+                if (Platform.isFuchsia) return 'fuchsia';
+                return 'unknown';
               },
             );
             controller.addJavaScriptHandler(

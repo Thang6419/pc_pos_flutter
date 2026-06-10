@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:pc_pos/local_image_gallery.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class CustomerDisplayApp extends StatefulWidget {
   final Map<String, dynamic> initialData;
@@ -18,7 +19,7 @@ class CustomerDisplayApp extends StatefulWidget {
 
 class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Map<String, dynamic> data = {};
-
+  String? qrValue;
   Map<String, dynamic> _asStringKeyMap(dynamic value) {
     if (value is String && value.isNotEmpty) {
       final decoded = jsonDecode(value);
@@ -66,7 +67,12 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
           data = newData;
         });
       }
-
+      if (call.method == 'show_customer_qr') {
+        final value = call.arguments?.toString().trim() ?? '';
+        setState(() {
+          qrValue = value.isEmpty ? null : value;
+        });
+      }
       return null;
     });
   }
@@ -245,6 +251,42 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
                       ],
                     )),
               ),
+              if (qrValue != null)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.58),
+                    child: Center(
+                      child: Container(
+                        width: 360,
+                        padding: const EdgeInsets.all(28),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            QrImageView(
+                              data: qrValue!,
+                              version: QrVersions.auto,
+                              size: 280,
+                              backgroundColor: Colors.white,
+                            ),
+                            const SizedBox(height: 20),
+                            const Text(
+                              'Scan to pay',
+                              style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF191919),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ])));
   }
 

@@ -58,3 +58,5 @@ MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 *.rar
 **/MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 vc_redist.x64.exe
+.agents/
+skills-lock.json

@@ -2,8 +2,10 @@
 
 abstract final class HandlerNames {
   static const String sendToCustomerDisplay = 'sendToCustomerDisplay';
+  static const String showCustomerQr = 'showCustomerQr';
   static const String requestDeviceId = 'requestDeviceId';
   static const String closeApp = 'closeApp';
+  static const String getPlatform = 'getPlatform';
   static const String toggleFullScreen = 'toggleFullScreen';
   static const String openMaximumWindow = 'openMaximumWindow';
   static const String openMinimizeWindow = 'openMinimizeWindow';
