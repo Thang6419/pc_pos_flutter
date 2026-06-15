@@ -67,10 +67,24 @@ void main(List<String> args) async {
     WidgetsFlutterBinding.ensureInitialized();
     // BỎ TOÀN BỘ windowManager ở đây để tránh lỗi MissingPluginException
 
-    final argument = args.length > 2 && args[2].isNotEmpty ? args[2] : '{}';
-    final data = jsonDecode(argument) as Map<String, dynamic>;
+    final windowId = args.length > 1 ? int.tryParse(args[1]) ?? -1 : -1;
+    Map<String, dynamic> data = {};
+    try {
+      final argument = args.length > 2 && args[2].isNotEmpty ? args[2] : '{}';
+      final decoded = jsonDecode(argument);
+      if (decoded is Map) {
+        data = Map<String, dynamic>.from(decoded);
+      } else {
+        await writeLog('CUSTOMER ENTRY ARGUMENT NOT MAP: $decoded');
+      }
+    } catch (e, s) {
+      await writeLog('CUSTOMER ENTRY JSON ERROR: $e');
+      await writeLog(s);
+    }
+
     runApp(
       CustomerDisplayApp(
+        windowId: windowId,
         initialData: data,
       ),
     );
@@ -209,16 +223,29 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   WindowController? secondWindow;
   int? secondWindowId;
+  final Set<int> _readyCustomerDisplayWindowIds = {};
 
   @override
   void initState() {
     super.initState();
+    DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
+      if (call.method == 'customer_display_ready') {
+        final args = call.arguments;
+        final windowId =
+            args is Map ? int.tryParse('${args['windowId']}') : null;
+        if (windowId != null) {
+          _readyCustomerDisplayWindowIds.add(windowId);
+        }
+      }
+      return null;
+    });
     init();
     windowManager.addListener(this);
   }
 
   @override
   void dispose() {
+    DesktopMultiWindow.setMethodHandler(null);
     windowManager.removeListener(this); // 3. Hủy lắng nghe khi hủy widget
     super.dispose();
   }
@@ -334,6 +361,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   Future<void> openSecondWindow({
     Map<String, dynamic>? initialData,
+    int retryAttempt = 0,
   }) async {
     if (_isOpeningSecondWindow) {
       await writeLog('OPEN SECOND WINDOW SKIPPED: already opening');
@@ -365,8 +393,19 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             await secondWindow!.show();
             await Future.delayed(const Duration(milliseconds: 300));
             await forceCustomerDisplayFullScreen(targetDisplay);
-            await writeLog('EXISTING SECOND WINDOW SHOWN');
-            return;
+            final isReady = await _waitForCustomerDisplayReady(secondWindowId!);
+            if (isReady) {
+              await writeLog('EXISTING SECOND WINDOW SHOWN');
+              return;
+            }
+
+            await writeLog(
+              'EXISTING SECOND WINDOW NOT READY, RECREATE: id=$secondWindowId',
+            );
+            await secondWindow!.close();
+            _readyCustomerDisplayWindowIds.remove(secondWindowId);
+            secondWindow = null;
+            secondWindowId = null;
           } catch (e) {
             await writeLog('EXISTING SECOND WINDOW SHOW ERROR: $e');
             secondWindow = null;
@@ -393,6 +432,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           'data': initialData ?? {},
         }),
       );
+      _readyCustomerDisplayWindowIds.remove(window.windowId);
       await writeLog('SECOND WINDOW CREATED: id=${window.windowId}');
       await window.setTitle('Customer Display');
 
@@ -407,6 +447,41 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
       await window.show();
       await writeLog('SECOND WINDOW SHOW DONE');
 
+      final isReady = await _waitForCustomerDisplayReady(window.windowId);
+      if (!isReady) {
+        await writeLog(
+          'CUSTOMER DISPLAY READY TIMEOUT: id=${window.windowId}, '
+          'retryAttempt=$retryAttempt',
+        );
+        try {
+          await window.close();
+          await writeLog(
+            'CUSTOMER DISPLAY STALE WINDOW CLOSED: id=${window.windowId}',
+          );
+        } catch (e) {
+          await writeLog(
+            'CUSTOMER DISPLAY STALE WINDOW CLOSE ERROR: '
+            'id=${window.windowId}, error=$e',
+          );
+        }
+
+        secondWindow = null;
+        secondWindowId = null;
+        _readyCustomerDisplayWindowIds.remove(window.windowId);
+
+        if (retryAttempt < 2) {
+          _isOpeningSecondWindow = false;
+          await Future.delayed(const Duration(milliseconds: 300));
+          return openSecondWindow(
+            initialData: initialData,
+            retryAttempt: retryAttempt + 1,
+          );
+        }
+
+        await writeLog('CUSTOMER DISPLAY READY RETRY EXHAUSTED');
+        return;
+      }
+
       await Future.delayed(const Duration(milliseconds: 300));
       await forceCustomerDisplayFullScreen(targetDisplay);
       await Future.delayed(const Duration(milliseconds: 300));
@@ -417,7 +492,6 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           'SECOND WINDOW FULLSCREEN FRAME: $frame SCALE: $scaleFactor');
     } catch (e) {
       await writeLog('OPEN SECOND WINDOW ERROR: $e');
-      print('PRINTERRRssssssssssssssssss: $e');
     } finally {
       _isOpeningSecondWindow = false;
     }
@@ -446,7 +520,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         jsonEncode(latest),
       );
     } catch (e) {
-      print('gfdfgdfgdfgdfgdfgdfg: $e');
+      await writeLog('SEND CUSTOMER DISPLAY ERROR: $e');
     }
   }
 
@@ -479,6 +553,17 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   Future<void> openMinimizeWindow() async {
     await windowManager.minimize();
+  }
+
+  Future<bool> _waitForCustomerDisplayReady(int windowId) async {
+    for (var i = 0; i < 30; i++) {
+      if (_readyCustomerDisplayWindowIds.contains(windowId)) {
+        return true;
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+
+    return false;
   }
 
   Future<bool> toggleFullScreen() async {

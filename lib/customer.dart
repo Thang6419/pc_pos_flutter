@@ -1,15 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:pc_pos/local_image_gallery.dart';
+import 'package:pc_pos/utils/common.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 class CustomerDisplayApp extends StatefulWidget {
+  final int windowId;
   final Map<String, dynamic> initialData;
 
   const CustomerDisplayApp({
     super.key,
+    required this.windowId,
     required this.initialData,
   });
 
@@ -20,16 +24,22 @@ class CustomerDisplayApp extends StatefulWidget {
 class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Map<String, dynamic> data = {};
   String? qrValue;
-  Map<String, dynamic> _asStringKeyMap(dynamic value) {
-    if (value is String && value.isNotEmpty) {
-      final decoded = jsonDecode(value);
-      return _asStringKeyMap(decoded);
-    }
 
-    if (value is Map) {
-      return value.map(
-        (key, value) => MapEntry('$key', _normalizeJsonValue(value)),
-      );
+  Map<String, dynamic> _asStringKeyMap(dynamic value) {
+    try {
+      if (value is String && value.isNotEmpty) {
+        final decoded = jsonDecode(value);
+        return _asStringKeyMap(decoded);
+      }
+
+      if (value is Map) {
+        return value.map(
+          (key, value) => MapEntry('$key', _normalizeJsonValue(value)),
+        );
+      }
+    } catch (e, s) {
+      unawaited(writeLog('CUSTOMER DISPLAY DATA PARSE ERROR: $e'));
+      unawaited(writeLog(s));
     }
 
     return {};
@@ -60,6 +70,15 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     super.initState();
 
     data = _asStringKeyMap(widget.initialData['data']);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(DesktopMultiWindow.invokeMethod(
+        0,
+        'customer_display_ready',
+        {'windowId': widget.windowId},
+      ));
+    });
+
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'update_customer_display') {
         final newData = _asStringKeyMap(call.arguments);

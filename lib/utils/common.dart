@@ -77,12 +77,19 @@ Future<void> writeLog(Object? message) async {
   if (!dir.existsSync()) dir.createSync(recursive: true);
 
   final file = File('${dir.path}\\app.log');
+  final sink = file.openSync(mode: FileMode.append);
 
-  await file.writeAsString(
-    '[${DateTime.now()}] $message\n',
-    mode: FileMode.append,
-    flush: true,
-  );
+  try {
+    sink.lockSync(FileLock.exclusive);
+    sink.writeStringSync('[${DateTime.now()}] $message\n');
+    sink.flushSync();
+  } finally {
+    try {
+      sink.unlockSync();
+    } finally {
+      sink.closeSync();
+    }
+  }
 }
 
 Future<WebViewEnvironment?> createWebViewEnv() async {

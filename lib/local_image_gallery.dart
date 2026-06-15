@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
+import 'package:pc_pos/utils/common.dart';
 
 class LocalImageGallery extends StatefulWidget {
   const LocalImageGallery({super.key});
@@ -33,52 +34,68 @@ class _LocalImageGalleryState extends State<LocalImageGallery> {
   }
 
   Future<void> loadImages() async {
-    final dir = Directory(folderPath);
+    try {
+      final dir = Directory(folderPath);
 
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-
-    final files = dir.listSync(recursive: true);
-
-    final scannedImages = files.whereType<File>().where((file) {
-      final path = file.path.toLowerCase();
-
-      return path.endsWith('.png') ||
-          path.endsWith('.jpg') ||
-          path.endsWith('.jpeg') ||
-          path.endsWith('.webp');
-    }).toList();
-
-    scannedImages.sort(
-      (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      images = scannedImages;
-
-      if (currentIndex >= images.length) {
-        currentIndex = 0;
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
       }
-    });
+
+      final files = dir.listSync(recursive: true);
+
+      final scannedImages = files.whereType<File>().where((file) {
+        final path = file.path.toLowerCase();
+
+        return path.endsWith('.png') ||
+            path.endsWith('.jpg') ||
+            path.endsWith('.jpeg') ||
+            path.endsWith('.webp');
+      }).toList();
+
+      scannedImages.sort(
+        (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        images = scannedImages;
+
+        if (currentIndex >= images.length) {
+          currentIndex = 0;
+        }
+      });
+    } catch (e, s) {
+      await writeLog('LOCAL IMAGE GALLERY LOAD ERROR: $e');
+      await writeLog(s);
+    }
   }
 
   void watchFolder() async {
-    final dir = Directory(folderPath);
+    try {
+      final dir = Directory(folderPath);
 
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-
-    watchSubscription = dir.watch(recursive: true).listen((event) async {
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      if (mounted) {
-        await loadImages();
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
       }
-    });
+
+      watchSubscription = dir.watch(recursive: true).listen(
+        (event) async {
+          await Future.delayed(const Duration(milliseconds: 300));
+
+          if (mounted) {
+            await loadImages();
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          unawaited(writeLog('LOCAL IMAGE GALLERY WATCH ERROR: $error'));
+          unawaited(writeLog(stackTrace));
+        },
+      );
+    } catch (e, s) {
+      await writeLog('LOCAL IMAGE GALLERY WATCH START ERROR: $e');
+      await writeLog(s);
+    }
   }
 
   @override
@@ -114,7 +131,14 @@ class _LocalImageGalleryState extends State<LocalImageGallery> {
                     child: Image.file(
                   images[index],
                   fit: BoxFit.cover, // hoặc contain nếu muốn hiện full ảnh
-                  errorBuilder: (_, __, ___) {
+                  errorBuilder: (_, error, stackTrace) {
+                    unawaited(writeLog(
+                      'LOCAL IMAGE GALLERY IMAGE ERROR: '
+                      'path=${images[index].path}, error=$error',
+                    ));
+                    if (stackTrace != null) {
+                      unawaited(writeLog(stackTrace));
+                    }
                     return Container(
                       color: Colors.black12,
                       alignment: Alignment.center,
