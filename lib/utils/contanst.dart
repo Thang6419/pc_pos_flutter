@@ -10,6 +10,7 @@ abstract final class HandlerNames {
   static const String openMaximumWindow = 'openMaximumWindow';
   static const String openMinimizeWindow = 'openMinimizeWindow';
   static const String print = 'print';
+  static const String printImage = 'printImage';
 }
 
 class ReceiptTemplate {

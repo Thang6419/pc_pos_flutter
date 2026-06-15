@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
@@ -61,6 +62,62 @@ class HtmlReceiptPrinter {
       socket?.destroy();
       dispose();
     }
+  }
+
+  Future<void> printImage({
+    required String imageBase64,
+    required String ip,
+    int port = 9100,
+  }) async {
+    Socket? socket;
+
+    try {
+      final imageBytes = base64Decode(_normalizeBase64Image(imageBase64));
+      final decoded = img.decodeImage(imageBytes);
+
+      if (decoded == null) {
+        throw Exception('Không decode được ảnh');
+      }
+
+      final image = img.copyResize(
+        decoded,
+        width: receiptWidth,
+        interpolation: img.Interpolation.nearest,
+      );
+
+      socket = await Socket.connect(
+        ip,
+        port,
+        timeout: const Duration(seconds: 3),
+      );
+
+      socket.setOption(SocketOption.tcpNoDelay, true);
+
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(paperSize, profile);
+
+      final bytes = <int>[
+        ...generator.reset(),
+        ...generator.imageRaster(image),
+        ...generator.feed(4),
+        ...generator.cut(),
+      ];
+
+      socket.add(bytes);
+      await socket.flush();
+
+      await Future.delayed(const Duration(milliseconds: 500));
+    } catch (e) {
+      throw Exception('Lỗi in ảnh: $e');
+    } finally {
+      await socket?.close();
+      socket?.destroy();
+      dispose();
+    }
+  }
+
+  String _normalizeBase64Image(String value) {
+    return value.replaceFirst(RegExp(r'^data:image/[^;]+;base64,'), '').trim();
   }
 
   Future<img.Image> _buildImageFromHtml(String html) async {

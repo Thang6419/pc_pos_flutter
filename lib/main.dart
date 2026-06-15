@@ -726,6 +726,41 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
                 };
               },
             );
+            controller.addJavaScriptHandler(
+              handlerName: HandlerNames.printImage,
+              callback: (args) async {
+                final data = Map<String, dynamic>.from(args.first as Map);
+
+                final ip = data['ip']?.toString() ?? '';
+                final port = int.tryParse(data['port'].toString()) ?? 9100;
+                final imageBase64 = data['imageBase64']?.toString() ??
+                    data['image']?.toString() ??
+                    '';
+
+                if (ip.isEmpty || imageBase64.isEmpty) {
+                  return {
+                    'success': false,
+                    'message': 'Thiếu ip hoặc imageBase64',
+                  };
+                }
+
+                final printer = HtmlReceiptPrinter(
+                  context: context,
+                  receiptWidth: 576,
+                  paperSize: PaperSize.mm80,
+                );
+
+                await printer.printImage(
+                  ip: ip,
+                  port: port,
+                  imageBase64: imageBase64,
+                );
+
+                return {
+                  'success': true,
+                };
+              },
+            );
           },
           onLoadStart: (controller, url) async {
             await writeLog('WEBVIEW LOAD START: $url');
