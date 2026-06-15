@@ -35,8 +35,7 @@ int _enumCustomerDisplayWindow(Pointer hwndPointer, int lParam) {
     GetClassName(hwnd, className, 256);
     GetWindowText(hwnd, title, 256);
 
-    if (className.toDartString() == 'FlutterMultiWindow' ||
-        title.toDartString() == _customerDisplayTitle) {
+    if (title.toDartString() == _customerDisplayTitle) {
       _customerDisplayHwndAddress = hwnd.address;
       return FALSE;
     }
@@ -359,6 +358,11 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     return otherDisplay;
   }
 
+  Future<bool> _hasSecondDisplay() async {
+    final displays = await screenRetriever.getAllDisplays();
+    return displays.length >= 2;
+  }
+
   Future<void> openSecondWindow({
     Map<String, dynamic>? initialData,
     int retryAttempt = 0,
@@ -372,9 +376,20 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
     try {
       await writeLog('OPEN SECOND WINDOW START');
+      if (!await _hasSecondDisplay()) {
+        await writeLog('OPEN SECOND WINDOW SKIPPED: no second display');
+        secondWindow = null;
+        secondWindowId = null;
+        _readyCustomerDisplayWindowIds.clear();
+        return;
+      }
+
       final targetDisplay = await _getOtherDisplay();
       if (targetDisplay == null) {
         await writeLog('NO SECOND DISPLAY');
+        secondWindow = null;
+        secondWindowId = null;
+        _readyCustomerDisplayWindowIds.clear();
         return;
       }
       await writeLog(
@@ -501,6 +516,13 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     try {
       _latestCustomerDisplayData = data;
 
+      if (!await _hasSecondDisplay()) {
+        secondWindow = null;
+        secondWindowId = null;
+        _readyCustomerDisplayWindowIds.clear();
+        return;
+      }
+
       if (_isOpeningSecondWindow) return;
 
       if (secondWindowId == null ||
@@ -528,6 +550,13 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     final qrValue = value?.trim() ?? '';
 
     try {
+      if (!await _hasSecondDisplay()) {
+        secondWindow = null;
+        secondWindowId = null;
+        _readyCustomerDisplayWindowIds.clear();
+        return;
+      }
+
       if (qrValue.isNotEmpty &&
           (secondWindowId == null ||
               !(await DesktopMultiWindow.getAllSubWindowIds())
