@@ -647,14 +647,22 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             controller.addJavaScriptHandler(
               handlerName: HandlerNames.showCustomerQr,
               callback: (args) async {
-                final value = args.isNotEmpty ? args[0]?.toString() : null;
+                String? value;
+                if (args.isNotEmpty) {
+                  final first = args[0];
+                  if (first is Map) {
+                    value = first['qrContent']?.toString();
+                  } else {
+                    value = first?.toString();
+                  }
+                }
                 await showCustomerQr(value);
               },
             );
             controller.addJavaScriptHandler(
               handlerName: HandlerNames.requestDeviceId,
               callback: (args) async {
-                return await getPhysicalId();
+                return await loadDeviceId();
               },
             );
             controller.addJavaScriptHandler(
