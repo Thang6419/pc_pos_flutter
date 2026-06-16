@@ -25,18 +25,6 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Map<String, dynamic> data = {};
   String? qrValue;
 
-  Future<void> _notifyReady() async {
-    try {
-      await DesktopMultiWindow.invokeMethod(
-        0,
-        'customer_display_ready',
-        {'windowId': widget.windowId},
-      );
-    } catch (e) {
-      unawaited(writeLog('CUSTOMER DISPLAY READY NOTIFY ERROR: $e'));
-    }
-  }
-
   Map<String, dynamic> _asStringKeyMap(dynamic value) {
     try {
       if (value is String && value.isNotEmpty) {
@@ -84,10 +72,10 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     data = _asStringKeyMap(widget.initialData['data']);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_notifyReady());
-      unawaited(Future<void>.delayed(
-        const Duration(milliseconds: 500),
-        _notifyReady,
+      unawaited(DesktopMultiWindow.invokeMethod(
+        0,
+        'customer_display_ready',
+        {'windowId': widget.windowId},
       ));
     });
 
