@@ -223,10 +223,18 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   WindowController? secondWindow;
   int? secondWindowId;
   final Set<int> _readyCustomerDisplayWindowIds = {};
+  bool _isCustomerDisplayReadyHandlerAttached = false;
 
   @override
   void initState() {
     super.initState();
+    init();
+    windowManager.addListener(this);
+  }
+
+  void _attachCustomerDisplayReadyHandler() {
+    if (_isCustomerDisplayReadyHandlerAttached) return;
+
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'customer_display_ready') {
         final args = call.arguments;
@@ -238,13 +246,19 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
       }
       return null;
     });
-    init();
-    windowManager.addListener(this);
+    _isCustomerDisplayReadyHandlerAttached = true;
+  }
+
+  void _detachCustomerDisplayReadyHandler() {
+    if (!_isCustomerDisplayReadyHandlerAttached) return;
+
+    DesktopMultiWindow.setMethodHandler(null);
+    _isCustomerDisplayReadyHandlerAttached = false;
   }
 
   @override
   void dispose() {
-    DesktopMultiWindow.setMethodHandler(null);
+    _detachCustomerDisplayReadyHandler();
     windowManager.removeListener(this); // 3. Hủy lắng nghe khi hủy widget
     super.dispose();
   }
@@ -384,6 +398,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         return;
       }
 
+      _attachCustomerDisplayReadyHandler();
+
       final targetDisplay = await _getOtherDisplay();
       if (targetDisplay == null) {
         await writeLog('NO SECOND DISPLAY');
@@ -447,7 +463,6 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           'data': initialData ?? {},
         }),
       );
-      _readyCustomerDisplayWindowIds.remove(window.windowId);
       await writeLog('SECOND WINDOW CREATED: id=${window.windowId}');
       await window.setTitle('Customer Display');
 
@@ -508,6 +523,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     } catch (e) {
       await writeLog('OPEN SECOND WINDOW ERROR: $e');
     } finally {
+      _detachCustomerDisplayReadyHandler();
       _isOpeningSecondWindow = false;
     }
   }
