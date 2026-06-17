@@ -6,7 +6,10 @@ import 'dart:io';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:pc_pos/customer.dart';
 import 'package:pc_pos/printer.dart';
@@ -21,6 +24,8 @@ import 'utils/device_id_service.dart';
 
 const _customerDisplayTitle = 'Customer Display';
 int _customerDisplayHwndAddress = 0;
+
+bool get _supportsWindowControls => Platform.isWindows;
 
 int _enumCustomerDisplayWindow(Pointer hwndPointer, int lParam) {
   final hwnd = HWND(hwndPointer);
@@ -63,7 +68,7 @@ void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
 // WINDOW PHỤ - Flutter UI only
-  if (args.isNotEmpty && args[0] == 'multi_window') {
+  if (_supportsWindowControls && args.isNotEmpty && args[0] == 'multi_window') {
     WidgetsFlutterBinding.ensureInitialized();
     // BỎ TOÀN BỘ windowManager ở đây để tránh lỗi MissingPluginException
 
@@ -84,19 +89,21 @@ void main(List<String> args) async {
     exit(0);
   }
   // WINDOW CHÍNH
-  await windowManager.ensureInitialized();
+  if (_supportsWindowControls) {
+    await windowManager.ensureInitialized();
 
-  const windowOptions = WindowOptions(
-    titleBarStyle: TitleBarStyle.hidden,
-    skipTaskbar: false,
-    alwaysOnTop: false,
-  );
+    const windowOptions = WindowOptions(
+      titleBarStyle: TitleBarStyle.hidden,
+      skipTaskbar: false,
+      alwaysOnTop: false,
+    );
 
-  await windowManager.waitUntilReadyToShow(windowOptions);
+    await windowManager.waitUntilReadyToShow(windowOptions);
 
-  await windowManager.show();
-  await windowManager.focus();
-  await windowManager.setPreventClose(true);
+    await windowManager.show();
+    await windowManager.focus();
+    await windowManager.setPreventClose(true);
+  }
 
   runApp(
     MaterialApp(
@@ -112,10 +119,12 @@ void main(List<String> args) async {
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     await Future.delayed(const Duration(milliseconds: 500));
     await AppUpdateService.instance.start();
-    await windowManager.setResizable(true);
-    await windowManager.setMaximizable(true);
-    // await windowManager.maximize();
-    await windowManager.setFullScreen(true);
+    if (_supportsWindowControls) {
+      await windowManager.setResizable(true);
+      await windowManager.setMaximizable(true);
+      // await windowManager.maximize();
+      await windowManager.setFullScreen(true);
+    }
   });
 }
 
@@ -202,6 +211,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   InAppWebViewController? webViewController;
   bool _isOpeningSecondWindow = false;
   bool _isClosingApp = false;
+  bool _isWebViewReady = false;
   Map<String, dynamic>? _latestCustomerDisplayData;
 
   String? deviceId;
@@ -214,12 +224,16 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   void initState() {
     super.initState();
     init();
-    windowManager.addListener(this);
+    if (_supportsWindowControls) {
+      windowManager.addListener(this);
+    }
   }
 
   @override
   void dispose() {
-    windowManager.removeListener(this); // 3. Hủy lắng nghe khi hủy widget
+    if (_supportsWindowControls) {
+      windowManager.removeListener(this);
+    }
     super.dispose();
   }
 
@@ -231,13 +245,14 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   Future<void> init() async {
     await writeLog('INIT WEBVIEW PAGE');
 
-    final result = await createWebViewEnv();
+    final result = _supportsWindowControls ? await createWebViewEnv() : null;
     await writeLog('WEBVIEW ENV RESULT: ${result == null ? 'null' : 'ready'}');
 
     if (!mounted) return;
 
     setState(() {
       env = result;
+      _isWebViewReady = true;
     });
   }
 
@@ -247,6 +262,10 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   Future<String?> getMachineGuid() async {
+    if (!Platform.isWindows) {
+      return null;
+    }
+
     final result = await Process.run(
       'powershell',
       ['(Get-CimInstance Win32_ComputerSystemProduct).UUID'],
@@ -280,6 +299,11 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   Future<Display?> _getOtherDisplay() async {
+    if (!_supportsWindowControls) {
+      await writeLog('GET OTHER DISPLAY SKIPPED: unsupported platform');
+      return null;
+    }
+
     final displays = await screenRetriever.getAllDisplays();
     await writeLog('DISPLAY COUNT: ${displays.length}');
     for (final display in displays) {
@@ -335,6 +359,11 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   Future<void> openSecondWindow({
     Map<String, dynamic>? initialData,
   }) async {
+    if (!_supportsWindowControls) {
+      await writeLog('OPEN SECOND WINDOW SKIPPED: unsupported platform');
+      return;
+    }
+
     if (_isOpeningSecondWindow) {
       await writeLog('OPEN SECOND WINDOW SKIPPED: already opening');
       return;
@@ -424,6 +453,11 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   Future<void> sendToCustomerDisplay(Map<String, dynamic> data) async {
+    if (!_supportsWindowControls) {
+      await writeLog('SEND TO CUSTOMER DISPLAY SKIPPED: unsupported platform');
+      return;
+    }
+
     try {
       _latestCustomerDisplayData = data;
 
@@ -451,6 +485,11 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   Future<void> showCustomerQr(String? value) async {
+    if (!_supportsWindowControls) {
+      await writeLog('SHOW CUSTOMER QR SKIPPED: unsupported platform');
+      return;
+    }
+
     final qrValue = value?.trim() ?? '';
 
     try {
@@ -474,14 +513,18 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   Future<void> openMaximumWindow() async {
+    if (!_supportsWindowControls) return;
     await windowManager.maximize();
   }
 
   Future<void> openMinimizeWindow() async {
+    if (!_supportsWindowControls) return;
     await windowManager.minimize();
   }
 
   Future<bool> toggleFullScreen() async {
+    if (!_supportsWindowControls) return false;
+
     bool isFull = await windowManager.isFullScreen();
     if (isFull) {
       await windowManager.setFullScreen(false);
@@ -499,6 +542,12 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     await writeLog('APP CLOSE START');
 
     try {
+      if (!_supportsWindowControls) {
+        webViewController = null;
+        await SystemNavigator.pop();
+        return;
+      }
+
       windowManager.removeListener(this);
 
       final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
@@ -522,7 +571,9 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
       exit(0);
     } catch (e) {
       await writeLog('APP CLOSE ERROR: $e');
-      exit(0);
+      if (_supportsWindowControls) {
+        exit(0);
+      }
     }
   }
 
@@ -546,7 +597,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading || env == null) {
+    if (isLoading || !_isWebViewReady) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
@@ -588,7 +639,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             onPressed: () async {
               _showDeviceIdAlert(
                 id: await getMachineGuid() ?? "Unknown Machine GUID",
-                title: 'Machine GUIDS',
+                title: 'Machine GUIDSdsdsdsd',
               );
             },
             child: const Icon(Icons.memory),
@@ -625,7 +676,12 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
       body: SafeArea(
         child: InAppWebView(
           key: webViewKey,
-          webViewEnvironment: env,
+          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+            Factory<OneSequenceGestureRecognizer>(
+              () => EagerGestureRecognizer(),
+            ),
+          },
+          webViewEnvironment: _supportsWindowControls ? env : null,
           initialUrlRequest: URLRequest(url: WebUri(baseUrl)),
           initialSettings: InAppWebViewSettings(
             javaScriptEnabled: true,

@@ -24,6 +24,9 @@ typedef GetLastErrorDart = int Function();
 const int ERROR_ALREADY_EXISTS = 183;
 
 Future<bool> ensureSingleInstance() async {
+  if (!Platform.isWindows) {
+    return true;
+  }
   final logFile = File(
       '${Platform.environment['LOCALAPPDATA']}\\PC_POS_single_instance.log');
 
@@ -72,11 +75,22 @@ Future<bool> ensureSingleInstance() async {
 }
 
 Future<void> writeLog(Object? message) async {
-  final dir =
-      Directory('${Platform.environment['LOCALAPPDATA']}\\PC_POS\\logs');
+  final basePath = Platform.isWindows
+      ? Platform.environment['LOCALAPPDATA']
+      : Directory.systemTemp.path;
+  if (basePath == null || basePath.isEmpty) {
+    print(message);
+    return;
+  }
+
+  final dir = Directory(
+    Platform.isWindows ? '$basePath\\PC_POS\\logs' : '$basePath/PC_POS/logs',
+  );
   if (!dir.existsSync()) dir.createSync(recursive: true);
 
-  final file = File('${dir.path}\\app.log');
+  final file = File(
+    Platform.isWindows ? '${dir.path}\\app.log' : '${dir.path}/app.log',
+  );
 
   await file.writeAsString(
     '[${DateTime.now()}] $message\n',
@@ -86,6 +100,10 @@ Future<void> writeLog(Object? message) async {
 }
 
 Future<WebViewEnvironment?> createWebViewEnv() async {
+  if (!Platform.isWindows) {
+    return null;
+  }
+
   try {
     await writeLog('CHECK WEBVIEW2 VERSION');
     final version = await WebViewEnvironment.getAvailableVersion();
