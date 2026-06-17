@@ -4,11 +4,11 @@
 [Setup]
 AppId={{147A48C2-0ADB-4166-810C-4ED83A4449D3}}
 AppName=PC POS
-AppVersion=1.1.4
+AppVersion=1.1.9
 DefaultDirName={localappdata}\PC_POS
 DefaultGroupName=PC POS
 OutputDir=Output
-OutputBaseFilename=PC_POS_Setup_1.1.4
+OutputBaseFilename=PC_POS_Setup_1.1.9
 Compression=lzma
 SolidCompression=yes
 DisableProgramGroupPage=yes

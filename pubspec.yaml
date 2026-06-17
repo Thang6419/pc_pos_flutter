@@ -49,6 +49,9 @@ dependencies:
   carousel_slider: ^5.1.2
   shorebird_code_push: ^2.0.6
   auto_updater: ^1.0.0
+  webview_flutter_platform_interface: ">=2.13.0 <2.15.0"
+  webview_win_floating: 2.0.0
+  webview_flutter: ">=4.9.0 <4.13.0"
 
 dev_dependencies:
   flutter_test:

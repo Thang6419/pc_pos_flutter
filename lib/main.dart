@@ -17,6 +17,9 @@ import 'package:pc_pos/services/app_update_service.dart';
 import 'package:pc_pos/utils/common.dart';
 import 'package:pc_pos/utils/contanst.dart';
 import 'package:screen_retriever/screen_retriever.dart';
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart'
+    as wv;
+import 'package:webview_win_floating/webview.dart';
 import 'package:win32/win32.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -206,12 +209,19 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   static const String baseUrl = 'http://103.159.59.15:8082/';
 
   final GlobalKey webViewKey = GlobalKey();
+  final FocusScopeNode _webViewFocusScopeNode = FocusScopeNode(
+    debugLabel: 'pc_pos_webview_scope',
+  );
+  final FocusNode _webViewFocusNode = FocusNode(debugLabel: 'pc_pos_webview');
 
   WebViewEnvironment? env;
   InAppWebViewController? webViewController;
+  WinWebViewController? _windowsWebViewController;
   bool _isOpeningSecondWindow = false;
   bool _isClosingApp = false;
   bool _isWebViewReady = false;
+  bool _useWindowsWebView = false;
+  String? _windowsWebViewError;
   Map<String, dynamic>? _latestCustomerDisplayData;
 
   String? deviceId;
@@ -234,6 +244,9 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     if (_supportsWindowControls) {
       windowManager.removeListener(this);
     }
+    _webViewFocusNode.dispose();
+    _webViewFocusScopeNode.dispose();
+    unawaited(_windowsWebViewController?.dispose());
     super.dispose();
   }
 
@@ -245,13 +258,83 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   Future<void> init() async {
     await writeLog('INIT WEBVIEW PAGE');
 
-    final result = _supportsWindowControls ? await createWebViewEnv() : null;
+    if (_supportsWindowControls) {
+      await _initWindowsWebView();
+      return;
+    }
+
+    await _initInAppWebView();
+  }
+
+  Future<void> _initInAppWebView() async {
+    final result = Platform.isWindows ? await createWebViewEnv() : null;
     await writeLog('WEBVIEW ENV RESULT: ${result == null ? 'null' : 'ready'}');
 
     if (!mounted) return;
 
     setState(() {
       env = result;
+      _useWindowsWebView = false;
+      _windowsWebViewError = null;
+      _isWebViewReady = true;
+    });
+  }
+
+  Future<void> _initWindowsWebView() async {
+    final controller = WinWebViewController();
+    _windowsWebViewController = controller;
+
+    try {
+      await writeLog('INIT WEBVIEW_WIN_FLOATING START');
+      await controller.setJavaScriptMode(wv.JavaScriptMode.unrestricted);
+      await controller.addJavaScriptChannel(
+        'pcPosWindowsBridge',
+        callback: (message) {
+          unawaited(_handleWindowsWebMessage(message.message));
+        },
+      );
+      await controller.setNavigationDelegate(
+        WinNavigationDelegate(
+          onPageStarted: (url) {
+            unawaited(writeLog('WEBVIEW_WIN_FLOATING LOAD START: $url'));
+          },
+          onPageFinished: (url) {
+            unawaited(writeLog('WEBVIEW_WIN_FLOATING LOAD STOP: $url'));
+            unawaited(_requestWebViewFocus());
+            unawaited(_injectWindowsBridge());
+            unawaited(_injectWindowsTouchInputFocusFix());
+          },
+          onWebResourceError: (error) {
+            unawaited(
+              writeLog(
+                'WEBVIEW_WIN_FLOATING LOAD ERROR: '
+                'url=${error.url}, code=${error.errorCode}, '
+                'desc=${error.description}',
+              ),
+            );
+          },
+        ),
+      );
+      await controller.loadRequest(Uri.parse(baseUrl));
+      await writeLog('WEBVIEW_WIN_FLOATING READY');
+    } catch (e, s) {
+      await writeLog('WEBVIEW_WIN_FLOATING INIT ERROR: $e');
+      await writeLog(s);
+      if (!mounted) return;
+      setState(() {
+        env = null;
+        _useWindowsWebView = true;
+        _windowsWebViewError = e.toString();
+        _isWebViewReady = true;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      env = null;
+      _useWindowsWebView = true;
+      _windowsWebViewError = null;
       _isWebViewReady = true;
     });
   }
@@ -459,9 +542,13 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     }
 
     try {
+      await writeLog('SEND TO CUSTOMER DISPLAY START: ${jsonEncode(data)}');
       _latestCustomerDisplayData = data;
 
-      if (_isOpeningSecondWindow) return;
+      if (_isOpeningSecondWindow) {
+        await writeLog('SEND TO CUSTOMER DISPLAY WAIT: window is opening');
+        return;
+      }
 
       if (secondWindowId == null ||
           !(await DesktopMultiWindow.getAllSubWindowIds())
@@ -469,18 +556,25 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         await openSecondWindow();
       }
 
-      if (secondWindowId == null) return;
+      if (secondWindowId == null) {
+        await writeLog('SEND TO CUSTOMER DISPLAY SKIPPED: no second window');
+        return;
+      }
 
       final latest = _latestCustomerDisplayData;
-      if (latest == null) return;
+      if (latest == null) {
+        await writeLog('SEND TO CUSTOMER DISPLAY SKIPPED: no latest data');
+        return;
+      }
 
       await DesktopMultiWindow.invokeMethod(
         secondWindowId!,
         'update_customer_display',
         jsonEncode(latest),
       );
+      await writeLog('SEND TO CUSTOMER DISPLAY DONE: window=$secondWindowId');
     } catch (e) {
-      print('gfdfgdfgdfgdfgdfgdfg: $e');
+      await writeLog('SEND TO CUSTOMER DISPLAY ERROR: $e');
     }
   }
 
@@ -595,11 +689,364 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     );
   }
 
+  String get _windowsTouchInputFocusFixScript => r"""
+    (function() {
+      function forceFocus(e) {
+        if (!e.target || !e.target.tagName) return;
+        var tagName = e.target.tagName.toUpperCase();
+        if (tagName === 'INPUT' || tagName === 'TEXTAREA') {
+          setTimeout(function() {
+            e.target.focus();
+            var val = e.target.value;
+            e.target.value = '';
+            e.target.value = val;
+          }, 30);
+        }
+      }
+
+      if (window.__pcPosTouchInputFocusFixInstalled) return;
+      window.__pcPosTouchInputFocusFixInstalled = true;
+      document.addEventListener('touchstart', forceFocus, true);
+      document.addEventListener('pointerdown', forceFocus, true);
+      document.addEventListener('mousedown', forceFocus, true);
+    })();
+  """;
+
+  String get _windowsBridgeScript => r"""
+    (function() {
+      if (window.__pcPosWindowsBridgeInstalled) return;
+      window.__pcPosWindowsBridgeInstalled = true;
+
+      var callbacks = {};
+      window.addEventListener('__pcPosHandlerResult', function(event) {
+        var detail = event.detail || {};
+        var callback = callbacks[detail.id];
+        if (!callback) return;
+        delete callbacks[detail.id];
+        if (detail.error) {
+          callback.reject(detail.error);
+        } else {
+          callback.resolve(detail.result);
+        }
+      });
+
+      window.flutter_inappwebview = window.flutter_inappwebview || {};
+      window.flutter_inappwebview.callHandler = function(handlerName) {
+        var args = Array.prototype.slice.call(arguments, 1);
+        var id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        return new Promise(function(resolve, reject) {
+          callbacks[id] = { resolve: resolve, reject: reject };
+          if (!window.pcPosWindowsBridge || !window.pcPosWindowsBridge.postMessage) {
+            delete callbacks[id];
+            reject('pcPosWindowsBridge is not available');
+            return;
+          }
+          window.pcPosWindowsBridge.postMessage(JSON.stringify({
+            __pcPosHandler: true,
+            id: id,
+            handlerName: handlerName,
+            args: args
+          }));
+        });
+      };
+    })();
+  """;
+
+  Future<void> _injectWindowsBridge() async {
+    final controller = _windowsWebViewController;
+    if (controller == null) return;
+    try {
+      await controller.runJavaScript(_windowsBridgeScript);
+    } catch (e) {
+      await writeLog('INJECT WINDOWS BRIDGE ERROR: $e');
+    }
+  }
+
+  Future<void> _injectWindowsTouchInputFocusFix() async {
+    final controller = _windowsWebViewController;
+    if (controller == null) return;
+    try {
+      await controller.runJavaScript(_windowsTouchInputFocusFixScript);
+    } catch (e) {
+      await writeLog('INJECT WINDOWS TOUCH INPUT FOCUS FIX ERROR: $e');
+    }
+  }
+
+  Future<void> _injectTouchInputFocusFix(
+    InAppWebViewController controller,
+  ) async {
+    try {
+      await controller.evaluateJavascript(source: """
+    function forceFocus(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        // Tạo một khoảng delay cực ngắn để đợi hệ thống blur xong thì mình focus lại
+        setTimeout(() => {
+          e.target.focus();
+          // Thử thêm dòng này để ép con trỏ chuột/touch nhảy vào cuối text
+          let val = e.target.value;
+          e.target.value = '';
+          e.target.value = val;
+        }, 30);
+      }
+    }
+
+    // Lắng nghe cả 3 loại sự kiện touch/pointer của Windows
+    document.addEventListener('touchstart', forceFocus, true);
+    document.addEventListener('pointerdown', forceFocus, true);
+    document.addEventListener('mousedown', forceFocus, true);
+  """);
+    } catch (e) {
+      await writeLog('INJECT TOUCH INPUT FOCUS FIX ERROR: $e');
+    }
+  }
+
+  Future<void> _requestWebViewFocus([Offset? localPosition]) async {
+    _webViewFocusNode.requestFocus();
+    final windowsController = _windowsWebViewController;
+    if (_supportsWindowControls && windowsController != null) {
+      try {
+        await windowsController.requestFocus();
+        await windowsController.runJavaScript("""
+          (function() {
+            var element = document.activeElement;
+            if (element && element.focus) element.focus();
+          })();
+        """);
+      } catch (e) {
+        await writeLog('WEBVIEW_WINDOWS REQUEST FOCUS ERROR: $e');
+      }
+      return;
+    }
+
+    final controller = webViewController;
+    if (controller == null) return;
+
+    try {
+      final focusScript = localPosition == null
+          ? """
+            (function() {
+              var element = document.activeElement;
+              if (element && element.focus) element.focus();
+            })();
+          """
+          : """
+            (function() {
+              var element = document.elementFromPoint(
+                ${localPosition.dx.toStringAsFixed(2)},
+                ${localPosition.dy.toStringAsFixed(2)}
+              );
+              if (!element) return;
+
+              var focusTarget = element.closest
+                ? element.closest('input, textarea, [contenteditable="true"]')
+                : element;
+
+              if (focusTarget && focusTarget.focus) {
+                setTimeout(function() {
+                  focusTarget.focus();
+                }, 0);
+              }
+            })();
+          """;
+
+      await controller.evaluateJavascript(source: focusScript);
+    } catch (e) {
+      await writeLog('WEBVIEW REQUEST FOCUS ERROR: $e');
+    }
+  }
+
+  Future<void> _handleWindowsWebMessage(dynamic rawMessage) async {
+    await writeLog('WEBVIEW_WIN_FLOATING MESSAGE: $rawMessage');
+    final message = rawMessage is String ? jsonDecode(rawMessage) : rawMessage;
+    if (message is! Map || message['__pcPosHandler'] != true) return;
+
+    final id = message['id']?.toString();
+    final handlerName = message['handlerName']?.toString();
+    final args = message['args'] is List ? message['args'] as List : const [];
+
+    dynamic result;
+    Object? error;
+
+    try {
+      switch (handlerName) {
+        case HandlerNames.sendToCustomerDisplay:
+          final data = args.isNotEmpty && args.first is Map
+              ? Map<String, dynamic>.from(args.first as Map)
+              : <String, dynamic>{};
+          await sendToCustomerDisplay(data);
+          result = true;
+          break;
+        case HandlerNames.showCustomerQr:
+          String? value;
+          if (args.isNotEmpty) {
+            final first = args.first;
+            if (first is Map) {
+              value = first['qrContent']?.toString();
+            } else {
+              value = first?.toString();
+            }
+          }
+          await showCustomerQr(value);
+          result = true;
+          break;
+        case HandlerNames.requestDeviceId:
+          result = await loadDeviceId();
+          break;
+        case HandlerNames.closeApp:
+          await closeApp();
+          result = true;
+          break;
+        case HandlerNames.getPlatform:
+          result = _platformName();
+          break;
+        case HandlerNames.toggleFullScreen:
+          result = await toggleFullScreen();
+          break;
+        case HandlerNames.openMaximumWindow:
+          await openMaximumWindow();
+          result = true;
+          break;
+        case HandlerNames.openMinimizeWindow:
+          await openMinimizeWindow();
+          result = true;
+          break;
+        case HandlerNames.print:
+          result = await _handlePrintArgs(args);
+          break;
+        case HandlerNames.printImage:
+          result = await _handlePrintImageArgs(args);
+          break;
+        default:
+          result = null;
+      }
+    } catch (e) {
+      error = e;
+      await writeLog('WEBVIEW_WINDOWS HANDLER ERROR: $handlerName $e');
+    }
+
+    if (id != null) {
+      await _sendWindowsHandlerResult(id: id, result: result, error: error);
+    }
+  }
+
+  Future<void> _sendWindowsHandlerResult({
+    required String id,
+    dynamic result,
+    Object? error,
+  }) async {
+    final controller = _windowsWebViewController;
+    if (controller == null) return;
+
+    final payload = jsonEncode({
+      'id': id,
+      'result': result,
+      'error': error?.toString(),
+    });
+    final script = """
+      window.dispatchEvent(new CustomEvent('__pcPosHandlerResult', {
+        detail: $payload
+      }));
+    """;
+    await controller.runJavaScript(script);
+  }
+
+  String _platformName() {
+    if (Platform.isWindows) return 'windows';
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isIOS) return 'ios';
+    if (Platform.isMacOS) return 'macos';
+    if (Platform.isLinux) return 'linux';
+    if (Platform.isFuchsia) return 'fuchsia';
+    return 'unknown';
+  }
+
+  Future<Map<String, dynamic>> _handlePrintArgs(List args) async {
+    final data = Map<String, dynamic>.from(args.first as Map);
+    final ip = data['ip']?.toString() ?? '';
+    final port = int.tryParse(data['port'].toString()) ?? 9100;
+    final html = data['html']?.toString() ?? '';
+
+    if (ip.isEmpty || html.isEmpty) {
+      return {'success': false, 'message': 'Thiếu ip hoặc html'};
+    }
+
+    final printer = HtmlReceiptPrinter(
+      context: context,
+      receiptWidth: 576,
+      paperSize: PaperSize.mm80,
+    );
+
+    await printer.printHtml(ip: ip, port: port, html: html);
+    return {'success': true};
+  }
+
+  Future<Map<String, dynamic>> _handlePrintImageArgs(List args) async {
+    final data = Map<String, dynamic>.from(args.first as Map);
+    final ip = data['ip']?.toString() ?? '';
+    final port = int.tryParse(data['port'].toString()) ?? 9100;
+    final imageBase64 =
+        data['imageBase64']?.toString() ?? data['image']?.toString() ?? '';
+
+    if (ip.isEmpty || imageBase64.isEmpty) {
+      return {'success': false, 'message': 'Thiếu ip hoặc imageBase64'};
+    }
+
+    final printer = HtmlReceiptPrinter(
+      context: context,
+      receiptWidth: 576,
+      paperSize: PaperSize.mm80,
+    );
+
+    await printer.printImage(
+      ip: ip,
+      port: port,
+      imageBase64: imageBase64,
+    );
+    return {'success': true};
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading || !_isWebViewReady) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_supportsWindowControls && _windowsWebViewError != null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                const SizedBox(height: 16),
+                const Text(
+                  'Windows WebView init failed',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _windowsWebViewError!,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () {
+                    setState(() {
+                      _isWebViewReady = false;
+                      _windowsWebViewError = null;
+                    });
+                    unawaited(_initWindowsWebView());
+                  },
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
@@ -639,7 +1086,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             onPressed: () async {
               _showDeviceIdAlert(
                 id: await getMachineGuid() ?? "Unknown Machine GUID",
-                title: 'Machine GUIDSdsdsdsd',
+                title: 'Machine GUIDS555',
               );
             },
             child: const Icon(Icons.memory),
@@ -674,183 +1121,205 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         ],
       ),
       body: SafeArea(
-        child: InAppWebView(
-          key: webViewKey,
-          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
-            Factory<OneSequenceGestureRecognizer>(
-              () => EagerGestureRecognizer(),
-            ),
-          },
-          webViewEnvironment: _supportsWindowControls ? env : null,
-          initialUrlRequest: URLRequest(url: WebUri(baseUrl)),
-          initialSettings: InAppWebViewSettings(
-            javaScriptEnabled: true,
-            useOnLoadResource: true,
-            mediaPlaybackRequiresUserGesture: false,
-            allowsInlineMediaPlayback: true,
+        child: FocusScope(
+          node: _webViewFocusScopeNode,
+          autofocus: true,
+          child: Focus(
+            autofocus: true,
+            canRequestFocus: true,
+            descendantsAreFocusable: true,
+            descendantsAreTraversable: true,
+            focusNode: _webViewFocusNode,
+            child: _supportsWindowControls || _useWindowsWebView
+                ? WinWebViewWidget(controller: _windowsWebViewController!)
+                : InAppWebView(
+                    key: webViewKey,
+                    gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                      Factory<OneSequenceGestureRecognizer>(
+                        () => EagerGestureRecognizer(),
+                      ),
+                    },
+                    webViewEnvironment: _supportsWindowControls ? env : null,
+                    initialUrlRequest: URLRequest(url: WebUri(baseUrl)),
+                    initialSettings: InAppWebViewSettings(
+                      javaScriptEnabled: true,
+                      useOnLoadResource: true,
+                      javaScriptCanOpenWindowsAutomatically: true,
+                      mediaPlaybackRequiresUserGesture: false,
+                      allowsInlineMediaPlayback: true,
+                    ),
+                    onWebViewCreated: (controller) async {
+                      await writeLog('WEBVIEW CREATED');
+                      webViewController = controller;
+                      await _requestWebViewFocus();
+
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.sendToCustomerDisplay,
+                        callback: (args) async {
+                          final data = args.isNotEmpty ? args[0] : {};
+                          await sendToCustomerDisplay(data);
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.showCustomerQr,
+                        callback: (args) async {
+                          String? value;
+                          if (args.isNotEmpty) {
+                            final first = args[0];
+                            if (first is Map) {
+                              value = first['qrContent']?.toString();
+                            } else {
+                              value = first?.toString();
+                            }
+                          }
+                          await showCustomerQr(value);
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.requestDeviceId,
+                        callback: (args) async {
+                          return await loadDeviceId();
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.closeApp,
+                        callback: (args) async {
+                          await closeApp();
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.getPlatform,
+                        callback: (args) async {
+                          if (Platform.isWindows) return 'windows';
+                          if (Platform.isAndroid) return 'android';
+                          if (Platform.isIOS) return 'ios';
+                          if (Platform.isMacOS) return 'macos';
+                          if (Platform.isLinux) return 'linux';
+                          if (Platform.isFuchsia) return 'fuchsia';
+                          return 'unknown';
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.toggleFullScreen,
+                        callback: (args) async {
+                          return await toggleFullScreen();
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.openMaximumWindow,
+                        callback: (args) async {
+                          return await openMaximumWindow();
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.openMinimizeWindow,
+                        callback: (args) async {
+                          return await openMinimizeWindow();
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.print,
+                        callback: (args) async {
+                          final data =
+                              Map<String, dynamic>.from(args.first as Map);
+
+                          final ip = data['ip']?.toString() ?? '';
+                          final port =
+                              int.tryParse(data['port'].toString()) ?? 9100;
+                          final html = data['html']?.toString() ?? '';
+
+                          if (ip.isEmpty || html.isEmpty) {
+                            return {
+                              'success': false,
+                              'message': 'Thiếu ip hoặc html',
+                            };
+                          }
+
+                          final printer = HtmlReceiptPrinter(
+                            context: context,
+                            receiptWidth: 576,
+                            paperSize: PaperSize.mm80,
+                          );
+
+                          await printer.printHtml(
+                            ip: ip,
+                            port: port,
+                            html: html,
+                          );
+
+                          return {
+                            'success': true,
+                          };
+                        },
+                      );
+                      controller.addJavaScriptHandler(
+                        handlerName: HandlerNames.printImage,
+                        callback: (args) async {
+                          final data =
+                              Map<String, dynamic>.from(args.first as Map);
+
+                          final ip = data['ip']?.toString() ?? '';
+                          final port =
+                              int.tryParse(data['port'].toString()) ?? 9100;
+                          final imageBase64 = data['imageBase64']?.toString() ??
+                              data['image']?.toString() ??
+                              '';
+
+                          if (ip.isEmpty || imageBase64.isEmpty) {
+                            return {
+                              'success': false,
+                              'message': 'Thiếu ip hoặc imageBase64',
+                            };
+                          }
+
+                          final printer = HtmlReceiptPrinter(
+                            context: context,
+                            receiptWidth: 576,
+                            paperSize: PaperSize.mm80,
+                          );
+
+                          await printer.printImage(
+                            ip: ip,
+                            port: port,
+                            imageBase64: imageBase64,
+                          );
+
+                          return {
+                            'success': true,
+                          };
+                        },
+                      );
+                    },
+                    onLoadStart: (controller, url) async {
+                      await writeLog('WEBVIEW LOAD START: $url');
+                    },
+                    onLoadStop: (controller, url) async {
+                      await writeLog('WEBVIEW LOAD STOP: $url');
+                      await _requestWebViewFocus();
+                      await _injectTouchInputFocusFix(controller);
+                    },
+                    onReceivedError: (controller, request, error) async {
+                      await writeLog(
+                        'WEBVIEW LOAD ERROR: url=${request.url}, '
+                        'code=${error.type}, desc=${error.description}',
+                      );
+                    },
+                    onReceivedHttpError:
+                        (controller, request, errorResponse) async {
+                      await writeLog(
+                        'WEBVIEW HTTP ERROR: url=${request.url}, '
+                        'status=${errorResponse.statusCode}, '
+                        'reason=${errorResponse.reasonPhrase}',
+                      );
+                    },
+                    onConsoleMessage: (controller, consoleMessage) async {
+                      await writeLog(
+                        'WEBVIEW CONSOLE: ${consoleMessage.messageLevel} '
+                        '${consoleMessage.message}',
+                      );
+                    },
+                  ),
           ),
-          onWebViewCreated: (controller) async {
-            await writeLog('WEBVIEW CREATED');
-            webViewController = controller;
-
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.sendToCustomerDisplay,
-              callback: (args) async {
-                final data = args.isNotEmpty ? args[0] : {};
-                await sendToCustomerDisplay(data);
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.showCustomerQr,
-              callback: (args) async {
-                String? value;
-                if (args.isNotEmpty) {
-                  final first = args[0];
-                  if (first is Map) {
-                    value = first['qrContent']?.toString();
-                  } else {
-                    value = first?.toString();
-                  }
-                }
-                await showCustomerQr(value);
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.requestDeviceId,
-              callback: (args) async {
-                return await loadDeviceId();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.closeApp,
-              callback: (args) async {
-                await closeApp();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.getPlatform,
-              callback: (args) async {
-                if (Platform.isWindows) return 'windows';
-                if (Platform.isAndroid) return 'android';
-                if (Platform.isIOS) return 'ios';
-                if (Platform.isMacOS) return 'macos';
-                if (Platform.isLinux) return 'linux';
-                if (Platform.isFuchsia) return 'fuchsia';
-                return 'unknown';
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.toggleFullScreen,
-              callback: (args) async {
-                return await toggleFullScreen();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.openMaximumWindow,
-              callback: (args) async {
-                return await openMaximumWindow();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.openMinimizeWindow,
-              callback: (args) async {
-                return await openMinimizeWindow();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.print,
-              callback: (args) async {
-                final data = Map<String, dynamic>.from(args.first as Map);
-
-                final ip = data['ip']?.toString() ?? '';
-                final port = int.tryParse(data['port'].toString()) ?? 9100;
-                final html = data['html']?.toString() ?? '';
-
-                if (ip.isEmpty || html.isEmpty) {
-                  return {
-                    'success': false,
-                    'message': 'Thiếu ip hoặc html',
-                  };
-                }
-
-                final printer = HtmlReceiptPrinter(
-                  context: context,
-                  receiptWidth: 576,
-                  paperSize: PaperSize.mm80,
-                );
-
-                await printer.printHtml(
-                  ip: ip,
-                  port: port,
-                  html: html,
-                );
-
-                return {
-                  'success': true,
-                };
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.printImage,
-              callback: (args) async {
-                final data = Map<String, dynamic>.from(args.first as Map);
-
-                final ip = data['ip']?.toString() ?? '';
-                final port = int.tryParse(data['port'].toString()) ?? 9100;
-                final imageBase64 = data['imageBase64']?.toString() ??
-                    data['image']?.toString() ??
-                    '';
-
-                if (ip.isEmpty || imageBase64.isEmpty) {
-                  return {
-                    'success': false,
-                    'message': 'Thiếu ip hoặc imageBase64',
-                  };
-                }
-
-                final printer = HtmlReceiptPrinter(
-                  context: context,
-                  receiptWidth: 576,
-                  paperSize: PaperSize.mm80,
-                );
-
-                await printer.printImage(
-                  ip: ip,
-                  port: port,
-                  imageBase64: imageBase64,
-                );
-
-                return {
-                  'success': true,
-                };
-              },
-            );
-          },
-          onLoadStart: (controller, url) async {
-            await writeLog('WEBVIEW LOAD START: $url');
-          },
-          onLoadStop: (controller, url) async {
-            await writeLog('WEBVIEW LOAD STOP: $url');
-          },
-          onReceivedError: (controller, request, error) async {
-            await writeLog(
-              'WEBVIEW LOAD ERROR: url=${request.url}, '
-              'code=${error.type}, desc=${error.description}',
-            );
-          },
-          onReceivedHttpError: (controller, request, errorResponse) async {
-            await writeLog(
-              'WEBVIEW HTTP ERROR: url=${request.url}, '
-              'status=${errorResponse.statusCode}, '
-              'reason=${errorResponse.reasonPhrase}',
-            );
-          },
-          onConsoleMessage: (controller, consoleMessage) async {
-            await writeLog(
-              'WEBVIEW CONSOLE: ${consoleMessage.messageLevel} '
-              '${consoleMessage.message}',
-            );
-          },
         ),
       ),
     );
