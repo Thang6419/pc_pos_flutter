@@ -11,6 +11,9 @@ abstract final class HandlerNames {
   static const String openMinimizeWindow = 'openMinimizeWindow';
   static const String print = 'print';
   static const String printImage = 'printImage';
+  static const String sendBytesToNetworkPrinter = 'sendBytesToNetworkPrinter';
+  static const String sendBytesToNetworkPrinterUpper =
+      'SEND_BYTES_TO_NETWORK_PRINTER';
 }
 
 class ReceiptTemplate {

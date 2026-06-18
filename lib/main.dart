@@ -479,6 +479,13 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
         return {'success': true};
 
+      case HandlerNames.sendBytesToNetworkPrinter:
+        final data = args.isNotEmpty && args.first is Map
+            ? Map<String, dynamic>.from(args.first as Map)
+            : <String, dynamic>{};
+
+        return await sendBytesToNetworkPrinter(data);
+
       default:
         return {
           'success': false,
@@ -551,6 +558,7 @@ window.__nativeBridgeResolve(
       HandlerNames.openMinimizeWindow,
       HandlerNames.print,
       HandlerNames.printImage,
+      HandlerNames.sendBytesToNetworkPrinter,
     ];
 
     for (final name in handlerNames) {
@@ -560,6 +568,60 @@ window.__nativeBridgeResolve(
           return await _handleNativeCall(name, args);
         },
       );
+    }
+  }
+
+  Future<Map<String, dynamic>> sendBytesToNetworkPrinter(
+    Map<String, dynamic> data,
+  ) async {
+    final ip = data['ip']?.toString().trim() ?? '';
+    final port = int.tryParse(data['port']?.toString() ?? '') ?? 9100;
+    final rawBytes = data['bytes'];
+
+    if (ip.isEmpty) {
+      return {'success': false, 'message': 'Thiếu ip'};
+    }
+
+    if (rawBytes is! List) {
+      return {'success': false, 'message': 'bytes phải là mảng số'};
+    }
+
+    final bytes = <int>[];
+    for (final value in rawBytes) {
+      final byte = value is num ? value.toInt() : int.tryParse('$value');
+      if (byte == null || byte < 0 || byte > 255) {
+        return {
+          'success': false,
+          'message': 'bytes chỉ nhận giá trị 0-255',
+        };
+      }
+      bytes.add(byte);
+    }
+
+    if (bytes.isEmpty) {
+      return {'success': false, 'message': 'bytes rỗng'};
+    }
+
+    Socket? socket;
+    try {
+      await writeLog(
+        'SEND BYTES TO NETWORK PRINTER START: ip=$ip, port=$port, '
+        'bytes=${bytes.length}',
+      );
+      socket = await Socket.connect(
+        ip,
+        port,
+        timeout: const Duration(seconds: 5),
+      );
+      socket.add(bytes);
+      await socket.flush();
+      await writeLog('SEND BYTES TO NETWORK PRINTER DONE: ip=$ip');
+      return {'success': true};
+    } catch (e) {
+      await writeLog('SEND BYTES TO NETWORK PRINTER ERROR: $e');
+      return {'success': false, 'message': e.toString()};
+    } finally {
+      socket?.destroy();
     }
   }
 
