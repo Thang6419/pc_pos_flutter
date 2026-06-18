@@ -5,7 +5,9 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   charset_converter
   desktop_multi_window
+  fullscreen_window
   screen_retriever_linux
+  webview_win_floating
   window_manager
 )
 

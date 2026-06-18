@@ -7,7 +7,9 @@ list(APPEND FLUTTER_PLUGIN_LIST
   charset_converter
   desktop_multi_window
   flutter_inappwebview_windows
+  fullscreen_window
   screen_retriever_windows
+  webview_win_floating
   window_manager
 )
 

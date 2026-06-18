@@ -10,7 +10,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:pc_pos/customer.dart';
 import 'package:pc_pos/printer.dart';
 import 'package:pc_pos/services/app_update_service.dart';
@@ -19,6 +18,9 @@ import 'package:pc_pos/utils/contanst.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:win32/win32.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_win_floating/webview_win_floating.dart';
 
 import 'utils/device_id_service.dart';
 
@@ -207,8 +209,10 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   final GlobalKey webViewKey = GlobalKey();
 
-  WebViewEnvironment? env;
-  InAppWebViewController? webViewController;
+  iaw.WebViewEnvironment? env;
+  iaw.InAppWebViewController? androidWebViewController;
+  WebViewController? windowsWebViewController;
+
   bool _isOpeningSecondWindow = false;
   bool _isClosingApp = false;
   bool _isWebViewReady = false;
@@ -245,15 +249,318 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   Future<void> init() async {
     await writeLog('INIT WEBVIEW PAGE');
 
-    final result = _supportsWindowControls ? await createWebViewEnv() : null;
-    await writeLog('WEBVIEW ENV RESULT: ${result == null ? 'null' : 'ready'}');
+    if (Platform.isWindows) {
+      await _initWindowsWebView();
+    } else {
+      final result = await createWebViewEnv();
+      await writeLog(
+          'WEBVIEW ENV RESULT: ${result == null ? 'null' : 'ready'}');
+
+      if (!mounted) return;
+
+      setState(() {
+        env = result;
+        _isWebViewReady = true;
+      });
+    }
+  }
+
+  Future<void> _initWindowsWebView() async {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    final userDataFolder =
+        localAppData != null ? '$localAppData\\PC_POS\\WebView2' : null;
+
+    final params = WindowsWebViewControllerCreationParams(
+      userDataFolder: userDataFolder,
+      profileName: 'main',
+    );
+
+    final controller = WebViewController.fromPlatformCreationParams(params);
+
+    await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+
+    await controller.addJavaScriptChannel(
+      'NativeBridge',
+      onMessageReceived: (JavaScriptMessage message) async {
+        await _handleWindowsNativeMessage(message.message);
+      },
+    );
+
+    controller.setNavigationDelegate(
+      NavigationDelegate(
+        onPageStarted: (url) async {
+          await writeLog('WINDOWS WEBVIEW LOAD START: $url');
+        },
+        onPageFinished: (url) async {
+          await writeLog('WINDOWS WEBVIEW LOAD STOP: $url');
+          await _injectWindowsBridge();
+        },
+        onWebResourceError: (error) async {
+          await writeLog(
+            'WINDOWS WEBVIEW ERROR: code=${error.errorCode}, desc=${error.description}',
+          );
+        },
+      ),
+    );
+
+    await controller.loadRequest(Uri.parse(baseUrl));
 
     if (!mounted) return;
 
     setState(() {
-      env = result;
+      windowsWebViewController = controller;
       _isWebViewReady = true;
     });
+  }
+
+  Future<void> _injectWindowsBridge() async {
+    final controller = windowsWebViewController;
+    if (controller == null) return;
+
+    const js = r'''
+(function () {
+  if (window.__PC_POS_NATIVE_BRIDGE__) return;
+
+  window.__PC_POS_NATIVE_BRIDGE__ = true;
+  window.__nativeBridgeSeq = 0;
+  window.__nativeBridgeCallbacks = {};
+
+  window.__nativeBridgeResolve = function (id, ok, payload) {
+    var cb = window.__nativeBridgeCallbacks[id];
+    if (!cb) return;
+
+    delete window.__nativeBridgeCallbacks[id];
+
+    if (ok) {
+      cb.resolve(payload);
+    } else {
+      cb.reject(payload);
+    }
+  };
+
+  window.flutter_inappwebview = window.flutter_inappwebview || {};
+
+  window.flutter_inappwebview.callHandler = function (handlerName) {
+    var args = Array.prototype.slice.call(arguments, 1);
+
+    return new Promise(function (resolve, reject) {
+      var id = String(++window.__nativeBridgeSeq);
+
+      window.__nativeBridgeCallbacks[id] = {
+        resolve: resolve,
+        reject: reject
+      };
+
+      NativeBridge.postMessage(JSON.stringify({
+        id: id,
+        handlerName: handlerName,
+        args: args
+      }));
+    });
+  };
+})();
+''';
+
+    await controller.runJavaScript(js);
+  }
+
+  Future<dynamic> _handleNativeCall(
+      String handlerName, List<dynamic> args) async {
+    switch (handlerName) {
+      case HandlerNames.sendToCustomerDisplay:
+        final data = args.isNotEmpty && args.first is Map
+            ? Map<String, dynamic>.from(args.first as Map)
+            : <String, dynamic>{};
+
+        await sendToCustomerDisplay(data);
+        return {'success': true};
+
+      case HandlerNames.showCustomerQr:
+        String? value;
+
+        if (args.isNotEmpty) {
+          final first = args.first;
+
+          if (first is Map) {
+            value = first['qrContent']?.toString();
+          } else {
+            value = first?.toString();
+          }
+        }
+
+        await showCustomerQr(value);
+        return {'success': true};
+
+      case HandlerNames.requestDeviceId:
+        return await loadDeviceId();
+
+      case HandlerNames.closeApp:
+        await closeApp();
+        return {'success': true};
+
+      case HandlerNames.getPlatform:
+        if (Platform.isWindows) return 'windows';
+        if (Platform.isAndroid) return 'android';
+        if (Platform.isIOS) return 'ios';
+        if (Platform.isMacOS) return 'macos';
+        if (Platform.isLinux) return 'linux';
+        if (Platform.isFuchsia) return 'fuchsia';
+        return 'unknown';
+
+      case HandlerNames.toggleFullScreen:
+        return await toggleFullScreen();
+
+      case HandlerNames.openMaximumWindow:
+        await openMaximumWindow();
+        return {'success': true};
+
+      case HandlerNames.openMinimizeWindow:
+        await openMinimizeWindow();
+        return {'success': true};
+
+      case HandlerNames.print:
+        final data = args.isNotEmpty && args.first is Map
+            ? Map<String, dynamic>.from(args.first as Map)
+            : <String, dynamic>{};
+
+        final ip = data['ip']?.toString() ?? '';
+        final port = int.tryParse(data['port']?.toString() ?? '') ?? 9100;
+        final html = data['html']?.toString() ?? '';
+
+        if (ip.isEmpty || html.isEmpty) {
+          return {
+            'success': false,
+            'message': 'Thiếu ip hoặc html',
+          };
+        }
+
+        final printer = HtmlReceiptPrinter(
+          context: context,
+          receiptWidth: 576,
+          paperSize: PaperSize.mm80,
+        );
+
+        await printer.printHtml(
+          ip: ip,
+          port: port,
+          html: html,
+        );
+
+        return {'success': true};
+
+      case HandlerNames.printImage:
+        final data = args.isNotEmpty && args.first is Map
+            ? Map<String, dynamic>.from(args.first as Map)
+            : <String, dynamic>{};
+
+        final ip = data['ip']?.toString() ?? '';
+        final port = int.tryParse(data['port']?.toString() ?? '') ?? 9100;
+        final imageBase64 =
+            data['imageBase64']?.toString() ?? data['image']?.toString() ?? '';
+
+        if (ip.isEmpty || imageBase64.isEmpty) {
+          return {
+            'success': false,
+            'message': 'Thiếu ip hoặc imageBase64',
+          };
+        }
+
+        final printer = HtmlReceiptPrinter(
+          context: context,
+          receiptWidth: 576,
+          paperSize: PaperSize.mm80,
+        );
+
+        await printer.printImage(
+          ip: ip,
+          port: port,
+          imageBase64: imageBase64,
+        );
+
+        return {'success': true};
+
+      default:
+        return {
+          'success': false,
+          'message': 'Unknown handler: $handlerName',
+        };
+    }
+  }
+
+  Future<void> _handleWindowsNativeMessage(String rawMessage) async {
+    String? id;
+
+    try {
+      final decoded = jsonDecode(rawMessage) as Map<String, dynamic>;
+
+      id = decoded['id']?.toString();
+      final handlerName = decoded['handlerName']?.toString() ?? '';
+      final args = decoded['args'] is List
+          ? List<dynamic>.from(decoded['args'] as List)
+          : <dynamic>[];
+
+      final result = await _handleNativeCall(handlerName, args);
+
+      await _resolveWindowsCall(
+        id: id,
+        ok: true,
+        payload: result,
+      );
+    } catch (e) {
+      await writeLog('WINDOWS NATIVE BRIDGE ERROR: $e');
+
+      await _resolveWindowsCall(
+        id: id,
+        ok: false,
+        payload: {
+          'success': false,
+          'message': e.toString(),
+        },
+      );
+    }
+  }
+
+  Future<void> _resolveWindowsCall({
+    required String? id,
+    required bool ok,
+    required dynamic payload,
+  }) async {
+    final controller = windowsWebViewController;
+    if (controller == null || id == null || id.isEmpty) return;
+
+    final js = '''
+window.__nativeBridgeResolve(
+  ${jsonEncode(id)},
+  $ok,
+  ${jsonEncode(payload)}
+);
+''';
+
+    await controller.runJavaScript(js);
+  }
+
+  void _registerAndroidHandlers(iaw.InAppWebViewController controller) {
+    final handlerNames = [
+      HandlerNames.sendToCustomerDisplay,
+      HandlerNames.showCustomerQr,
+      HandlerNames.requestDeviceId,
+      HandlerNames.closeApp,
+      HandlerNames.getPlatform,
+      HandlerNames.toggleFullScreen,
+      HandlerNames.openMaximumWindow,
+      HandlerNames.openMinimizeWindow,
+      HandlerNames.print,
+      HandlerNames.printImage,
+    ];
+
+    for (final name in handlerNames) {
+      controller.addJavaScriptHandler(
+        handlerName: name,
+        callback: (args) async {
+          return await _handleNativeCall(name, args);
+        },
+      );
+    }
   }
 
   Future<String> loadDeviceId() async {
@@ -282,21 +589,21 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     return await getMachineGuid() ?? await loadDeviceId();
   }
 
-  void _showDeviceIdAlert({String id = '', String title = 'Device ID'}) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: SelectableText(id),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
+  // void _showDeviceIdAlert({String id = '', String title = 'Device ID'}) {
+  //   showDialog<void>(
+  //     context: context,
+  //     builder: (context) => AlertDialog(
+  //       title: Text(title),
+  //       content: SelectableText(id),
+  //       actions: [
+  //         FilledButton(
+  //           onPressed: () => Navigator.pop(context),
+  //           child: const Text('OK'),
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
 
   Future<Display?> _getOtherDisplay() async {
     if (!_supportsWindowControls) {
@@ -446,7 +753,6 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           'SECOND WINDOW FULLSCREEN FRAME: $frame SCALE: $scaleFactor');
     } catch (e) {
       await writeLog('OPEN SECOND WINDOW ERROR: $e');
-      print('PRINTERRRssssssssssssssssss: $e');
     } finally {
       _isOpeningSecondWindow = false;
     }
@@ -480,7 +786,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         jsonEncode(latest),
       );
     } catch (e) {
-      print('gfdfgdfgdfgdfgdfgdfg: $e');
+      await writeLog('SEND TO CUSTOMER DISPLAY ERROR: $e');
     }
   }
 
@@ -543,7 +849,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
     try {
       if (!_supportsWindowControls) {
-        webViewController = null;
+        androidWebViewController = null;
+        windowsWebViewController = null;
         await SystemNavigator.pop();
         return;
       }
@@ -564,7 +871,6 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
       secondWindow = null;
       secondWindowId = null;
-      webViewController = null;
 
       await Future.delayed(const Duration(milliseconds: 300));
       await writeLog('APP CLOSE PROCESS EXIT');
@@ -577,21 +883,81 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     }
   }
 
-  Future<void> _printViaPureSocket({
-    required String ip,
-    required String html,
-    int port = 9100,
-  }) async {
-    final printer = HtmlReceiptPrinter(
-      context: context,
-      receiptWidth: 576,
-      paperSize: PaperSize.mm80,
-    );
+  // Future<void> _printViaPureSocket({
+  //   required String ip,
+  //   required String html,
+  //   int port = 9100,
+  // }) async {
+  //   final printer = HtmlReceiptPrinter(
+  //     context: context,
+  //     receiptWidth: 576,
+  //     paperSize: PaperSize.mm80,
+  //   );
 
-    await printer.printHtml(
-      html: html,
-      ip: ip,
-      port: port,
+  //   await printer.printHtml(
+  //     html: html,
+  //     ip: ip,
+  //     port: port,
+  //   );
+  // }
+
+  Widget _buildWindowsWebView() {
+    final controller = windowsWebViewController;
+
+    if (controller == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return WebViewWidget(controller: controller);
+  }
+
+  Widget _buildAndroidWebView() {
+    return iaw.InAppWebView(
+      key: webViewKey,
+      gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+        Factory<OneSequenceGestureRecognizer>(
+          () => EagerGestureRecognizer(),
+        ),
+      },
+      webViewEnvironment: env,
+      initialUrlRequest: iaw.URLRequest(url: iaw.WebUri(baseUrl)),
+      initialSettings: iaw.InAppWebViewSettings(
+        javaScriptEnabled: true,
+        useOnLoadResource: true,
+        mediaPlaybackRequiresUserGesture: false,
+        allowsInlineMediaPlayback: true,
+      ),
+      onWebViewCreated: (controller) async {
+        await writeLog('ANDROID WEBVIEW CREATED');
+
+        androidWebViewController = controller;
+        _registerAndroidHandlers(controller);
+      },
+      onLoadStart: (controller, url) async {
+        await writeLog('ANDROID WEBVIEW LOAD START: $url');
+      },
+      onLoadStop: (controller, url) async {
+        await writeLog('ANDROID WEBVIEW LOAD STOP: $url');
+      },
+      onReceivedError: (controller, request, error) async {
+        await writeLog(
+          'ANDROID WEBVIEW LOAD ERROR: url=${request.url}, '
+          'code=${error.type}, desc=${error.description}',
+        );
+      },
+      onReceivedHttpError: (controller, request, errorResponse) async {
+        await writeLog(
+          'ANDROID WEBVIEW HTTP ERROR: url=${request.url}, '
+          'status=${errorResponse.statusCode}, '
+          'reason=${errorResponse.reasonPhrase}',
+        );
+      },
+      onConsoleMessage: (controller, consoleMessage) async {
+        await writeLog(
+          'ANDROID WEBVIEW CONSOLE: ${consoleMessage.messageLevel} '
+          '${consoleMessage.message}',
+        );
+      },
     );
   }
 
@@ -604,254 +970,10 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     }
 
     return Scaffold(
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton(
-            heroTag: 'print_test',
-            onPressed: () => _printViaPureSocket(
-              ip: '192.168.0.240', // Replace with actual IP
-              html: ReceiptTemplate.receiptHtml, // Replace with actual HTML
-            ),
-            child: const Icon(Icons.print),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'open_second_window',
-            onPressed: () => openSecondWindow(),
-            child: const Icon(Icons.open_in_new),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'toggle_fullscreen',
-            onPressed: () => toggleFullScreen(),
-            child: const Icon(Icons.fullscreen),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'close_app',
-            onPressed: () => closeApp(),
-            child: const Icon(Icons.close),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'get_machine_guid',
-            onPressed: () async {
-              _showDeviceIdAlert(
-                id: await getMachineGuid() ?? "Unknown Machine GUID",
-                title: 'Machine GUIDSdsdsdsd',
-              );
-            },
-            child: const Icon(Icons.memory),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'load_device_id',
-            onPressed: () async {
-              _showDeviceIdAlert(
-                id: await loadDeviceId(),
-                title: 'Device ID',
-              );
-            },
-            child: const Icon(Icons.device_hub),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'show_qr',
-            onPressed: () async {
-              showCustomerQr('https://example.com');
-            },
-            child: const Icon(Icons.qr_code),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'close_qr',
-            onPressed: () async {
-              showCustomerQr('');
-            },
-            child: const Icon(Icons.qr_code),
-          ),
-        ],
-      ),
       body: SafeArea(
-        child: InAppWebView(
-          key: webViewKey,
-          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
-            Factory<OneSequenceGestureRecognizer>(
-              () => EagerGestureRecognizer(),
-            ),
-          },
-          webViewEnvironment: _supportsWindowControls ? env : null,
-          initialUrlRequest: URLRequest(url: WebUri(baseUrl)),
-          initialSettings: InAppWebViewSettings(
-            javaScriptEnabled: true,
-            useOnLoadResource: true,
-            mediaPlaybackRequiresUserGesture: false,
-            allowsInlineMediaPlayback: true,
-          ),
-          onWebViewCreated: (controller) async {
-            await writeLog('WEBVIEW CREATED');
-            webViewController = controller;
-
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.sendToCustomerDisplay,
-              callback: (args) async {
-                final data = args.isNotEmpty ? args[0] : {};
-                await sendToCustomerDisplay(data);
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.showCustomerQr,
-              callback: (args) async {
-                String? value;
-                if (args.isNotEmpty) {
-                  final first = args[0];
-                  if (first is Map) {
-                    value = first['qrContent']?.toString();
-                  } else {
-                    value = first?.toString();
-                  }
-                }
-                await showCustomerQr(value);
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.requestDeviceId,
-              callback: (args) async {
-                return await loadDeviceId();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.closeApp,
-              callback: (args) async {
-                await closeApp();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.getPlatform,
-              callback: (args) async {
-                if (Platform.isWindows) return 'windows';
-                if (Platform.isAndroid) return 'android';
-                if (Platform.isIOS) return 'ios';
-                if (Platform.isMacOS) return 'macos';
-                if (Platform.isLinux) return 'linux';
-                if (Platform.isFuchsia) return 'fuchsia';
-                return 'unknown';
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.toggleFullScreen,
-              callback: (args) async {
-                return await toggleFullScreen();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.openMaximumWindow,
-              callback: (args) async {
-                return await openMaximumWindow();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.openMinimizeWindow,
-              callback: (args) async {
-                return await openMinimizeWindow();
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.print,
-              callback: (args) async {
-                final data = Map<String, dynamic>.from(args.first as Map);
-
-                final ip = data['ip']?.toString() ?? '';
-                final port = int.tryParse(data['port'].toString()) ?? 9100;
-                final html = data['html']?.toString() ?? '';
-
-                if (ip.isEmpty || html.isEmpty) {
-                  return {
-                    'success': false,
-                    'message': 'Thiếu ip hoặc html',
-                  };
-                }
-
-                final printer = HtmlReceiptPrinter(
-                  context: context,
-                  receiptWidth: 576,
-                  paperSize: PaperSize.mm80,
-                );
-
-                await printer.printHtml(
-                  ip: ip,
-                  port: port,
-                  html: html,
-                );
-
-                return {
-                  'success': true,
-                };
-              },
-            );
-            controller.addJavaScriptHandler(
-              handlerName: HandlerNames.printImage,
-              callback: (args) async {
-                final data = Map<String, dynamic>.from(args.first as Map);
-
-                final ip = data['ip']?.toString() ?? '';
-                final port = int.tryParse(data['port'].toString()) ?? 9100;
-                final imageBase64 = data['imageBase64']?.toString() ??
-                    data['image']?.toString() ??
-                    '';
-
-                if (ip.isEmpty || imageBase64.isEmpty) {
-                  return {
-                    'success': false,
-                    'message': 'Thiếu ip hoặc imageBase64',
-                  };
-                }
-
-                final printer = HtmlReceiptPrinter(
-                  context: context,
-                  receiptWidth: 576,
-                  paperSize: PaperSize.mm80,
-                );
-
-                await printer.printImage(
-                  ip: ip,
-                  port: port,
-                  imageBase64: imageBase64,
-                );
-
-                return {
-                  'success': true,
-                };
-              },
-            );
-          },
-          onLoadStart: (controller, url) async {
-            await writeLog('WEBVIEW LOAD START: $url');
-          },
-          onLoadStop: (controller, url) async {
-            await writeLog('WEBVIEW LOAD STOP: $url');
-          },
-          onReceivedError: (controller, request, error) async {
-            await writeLog(
-              'WEBVIEW LOAD ERROR: url=${request.url}, '
-              'code=${error.type}, desc=${error.description}',
-            );
-          },
-          onReceivedHttpError: (controller, request, errorResponse) async {
-            await writeLog(
-              'WEBVIEW HTTP ERROR: url=${request.url}, '
-              'status=${errorResponse.statusCode}, '
-              'reason=${errorResponse.reasonPhrase}',
-            );
-          },
-          onConsoleMessage: (controller, consoleMessage) async {
-            await writeLog(
-              'WEBVIEW CONSOLE: ${consoleMessage.messageLevel} '
-              '${consoleMessage.message}',
-            );
-          },
-        ),
+        child: Platform.isWindows
+            ? _buildWindowsWebView()
+            : _buildAndroidWebView(),
       ),
     );
   }
