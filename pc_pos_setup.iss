@@ -3,12 +3,12 @@
 
 [Setup]
 AppId={{147A48C2-0ADB-4166-810C-4ED83A4449D3}}
-AppName=PC POS
+AppName=Alliex
 AppVersion=1.1.10
-DefaultDirName={localappdata}\PC_POS
-DefaultGroupName=PC POS
+DefaultDirName={localappdata}\Alliex
+DefaultGroupName=Alliex
 OutputDir=Output
-OutputBaseFilename=PC_POS_Setup_1.1.10
+OutputBaseFilename=Alliex_Setup_1.1.10
 Compression=lzma
 SolidCompression=yes
 DisableProgramGroupPage=yes
@@ -19,10 +19,10 @@ Source: "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags:
 Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
-Name: "{group}\PC POS"; Filename: "{app}\pc_pos.exe"
-Name: "{commondesktop}\PC POS"; Filename: "{app}\pc_pos.exe"
+Name: "{group}\Alliex"; Filename: "{app}\Alliex.exe"
+Name: "{commondesktop}\Alliex"; Filename: "{app}\Alliex.exe"
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; Flags: waituntilterminated
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; Flags: waituntilterminated
-Filename: "{app}\pc_pos.exe"; Description: "Launch PC POS"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Alliex.exe"; Description: "Launch Alliex"; Flags: nowait postinstall skipifsilent

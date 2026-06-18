@@ -98,12 +98,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "pc_pos" "\0"
+            VALUE "FileDescription", "Alliex" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "pc_pos" "\0"
+            VALUE "InternalName", "Alliex" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "pc_pos.exe" "\0"
-            VALUE "ProductName", "pc_pos" "\0"
+            VALUE "OriginalFilename", "Alliex.exe" "\0"
+            VALUE "ProductName", "Alliex" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -109,12 +109,13 @@ void main(List<String> args) async {
 
   runApp(
     MaterialApp(
+      title: 'Alliex',
       navigatorKey: appUpdateNavigatorKey,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         fontFamily: 'Roboto',
       ),
-      home: const WebViewPage(),
+      home: const AppSplashScreen(),
     ),
   );
 
@@ -194,6 +195,41 @@ Future<void> forceCustomerDisplayFullScreen(Display targetDisplay) async {
   } finally {
     calloc.free(monitorPoint);
     calloc.free(monitorInfo);
+  }
+}
+
+class AppSplashScreen extends StatefulWidget {
+  const AppSplashScreen({super.key});
+
+  @override
+  State<AppSplashScreen> createState() => _AppSplashScreenState();
+}
+
+class _AppSplashScreenState extends State<AppSplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const WebViewPage()),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Colors.white,
+      body: Center(
+        child: Image(
+          image: AssetImage('assets/logoSplashScreen.png'),
+          width: 240,
+          height: 240,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
   }
 }
 

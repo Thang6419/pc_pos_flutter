@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:auto_updater/auto_updater.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -15,7 +14,7 @@ const _appcastUrl = 'http://103.159.59.15:8082/api/version/check-version-xml';
 
 final appUpdateNavigatorKey = GlobalKey<NavigatorState>();
 
-class AppUpdateService with UpdaterListener {
+class AppUpdateService {
   AppUpdateService._();
 
   static final AppUpdateService instance = AppUpdateService._();
@@ -121,7 +120,10 @@ class AppUpdateService with UpdaterListener {
 
   Future<bool?> _confirmAndroidApkUpdate(_AndroidApkUpdateInfo info) async {
     final context = appUpdateNavigatorKey.currentContext;
-    if (context == null) return true;
+    if (context == null) {
+      await writeLog('ANDROID APK UPDATE PROMPT SKIPPED: no navigator context');
+      return true;
+    }
 
     return showDialog<bool>(
       context: context,
@@ -194,20 +196,88 @@ class AppUpdateService with UpdaterListener {
 
   Future<void> _checkInstallerUpdate() async {
     if (!Platform.isWindows && !Platform.isMacOS) {
-      await writeLog('AUTO UPDATER SKIPPED: unsupported platform');
+      await writeLog('INSTALLER UPDATE SKIPPED: unsupported platform');
       return;
     }
 
     try {
-      autoUpdater.addListener(this);
-      await autoUpdater.setFeedURL(_appcastUrl);
-      await autoUpdater.setScheduledCheckInterval(0);
-      await writeLog('AUTO UPDATER READY: $_appcastUrl');
+      await writeLog('INSTALLER UPDATE CHECK START: $_appcastUrl');
+      final info = await _fetchAndroidApkUpdateInfo();
+      if (info == null) {
+        await writeLog('INSTALLER UPDATE SKIPPED: invalid xml');
+        return;
+      }
 
-      await autoUpdater.checkForUpdates(inBackground: true);
-    } catch (e) {
-      await writeLog('AUTO UPDATER START ERROR: $e');
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+      final currentVersion = packageInfo.version;
+      await writeLog(
+        'INSTALLER UPDATE VERSION: current=$currentVersion+$currentBuild, '
+        'remote=${info.version}+${info.buildNumber}',
+      );
+
+      if (info.buildNumber <= currentBuild &&
+          info.version == currentVersion) {
+        await writeLog('INSTALLER UPDATE NOT AVAILABLE');
+        return;
+      }
+
+      final shouldInstall = await _confirmAndroidApkUpdate(info);
+      if (shouldInstall != true) {
+        await writeLog('INSTALLER UPDATE DECLINED');
+        return;
+      }
+
+      await _downloadAndOpenInstaller(info);
+    } catch (e, s) {
+      await writeLog('INSTALLER UPDATE ERROR: $e');
+      await writeLog(s);
     }
+  }
+
+  Future<void> _downloadAndOpenInstaller(_AndroidApkUpdateInfo info) async {
+    HttpClient? client;
+    IOSink? sink;
+
+    try {
+      final directory = await getTemporaryDirectory();
+      final file = File(
+        '${directory.path}/pc_pos_${info.version}_${info.buildNumber}${_installerExtension(info)}',
+      );
+
+      await writeLog('INSTALLER DOWNLOAD START: ${info.apkUrl}');
+      client = HttpClient();
+      final request = await client.getUrl(Uri.parse(info.apkUrl));
+      final response = await request.close();
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(
+          'Download installer failed: ${response.statusCode}',
+          uri: Uri.parse(info.apkUrl),
+        );
+      }
+
+      sink = file.openWrite();
+      await response.pipe(sink);
+      sink = null;
+
+      await writeLog('INSTALLER DOWNLOAD DONE: ${file.path}');
+      final result = await OpenFilex.open(file.path);
+      await writeLog(
+        'INSTALLER OPEN RESULT: ${result.type} ${result.message}',
+      );
+    } finally {
+      await sink?.close();
+      client?.close(force: true);
+    }
+  }
+
+  String _installerExtension(_AndroidApkUpdateInfo info) {
+    final lower = info.apkUrl.toLowerCase();
+    if (lower.endsWith('.msi')) return '.msi';
+    if (lower.endsWith('.exe')) return '.exe';
+    if (lower.endsWith('.dmg')) return '.dmg';
+    return '';
   }
 
   Future<void> _checkShorebirdPatch() async {
@@ -240,44 +310,6 @@ class AppUpdateService with UpdaterListener {
     }
   }
 
-  @override
-  void onUpdaterError(UpdaterError? error) {
-    unawaited(writeLog('AUTO UPDATER ERROR: ${error?.message}'));
-  }
-
-  @override
-  void onUpdaterCheckingForUpdate(Appcast? appcast) {
-    unawaited(writeLog('AUTO UPDATER CHECKING'));
-  }
-
-  @override
-  void onUpdaterUpdateAvailable(AppcastItem? appcastItem) {
-    unawaited(writeLog(
-      'AUTO UPDATER UPDATE AVAILABLE: '
-      'version=${_versionLabel(appcastItem)}, url=${appcastItem?.fileURL}',
-    ));
-  }
-
-  @override
-  void onUpdaterUpdateNotAvailable(UpdaterError? error) {
-    unawaited(writeLog('AUTO UPDATER UPDATE NOT AVAILABLE'));
-  }
-
-  @override
-  void onUpdaterUpdateDownloaded(AppcastItem? appcastItem) {
-    unawaited(writeLog(
-      'AUTO UPDATER UPDATE DOWNLOADED: version=${_versionLabel(appcastItem)}',
-    ));
-  }
-
-  @override
-  void onUpdaterBeforeQuitForUpdate(AppcastItem? appcastItem) {
-    unawaited(writeLog('AUTO UPDATER BEFORE QUIT FOR UPDATE'));
-  }
-
-  String _versionLabel(AppcastItem? item) {
-    return item?.displayVersionString ?? item?.versionString ?? '';
-  }
 }
 
 class _AndroidApkUpdateInfo {
