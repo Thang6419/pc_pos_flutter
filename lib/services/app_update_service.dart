@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:auto_updater/auto_updater.dart';
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:pc_pos/utils/common.dart';
 import 'package:shorebird_code_push/shorebird_code_push.dart';
+import 'package:xml/xml.dart';
 
 const _appcastUrl = 'http://103.159.59.15:8082/api/version/check-version-xml';
 
@@ -17,6 +22,8 @@ class AppUpdateService with UpdaterListener {
 
   final ShorebirdUpdater _shorebirdUpdater = ShorebirdUpdater();
   bool _started = false;
+  bool _checkingAndroidApk = false;
+  bool _installingAndroidApk = false;
 
   Future<void> start() async {
     if (_started) return;
@@ -24,7 +31,165 @@ class AppUpdateService with UpdaterListener {
     await writeLog('APP UPDATE SERVICE STARTED');
 
     unawaited(_checkShorebirdPatch());
-    unawaited(_checkInstallerUpdate());
+
+    if (Platform.isWindows || Platform.isMacOS) {
+      unawaited(_checkInstallerUpdate());
+    } else if (Platform.isAndroid) {
+      unawaited(_checkAndroidApkUpdate());
+    } else {
+      await writeLog('APP UPDATE INSTALLER SKIPPED: unsupported platform');
+    }
+  }
+
+  Future<void> _checkAndroidApkUpdate() async {
+    if (!Platform.isAndroid) return;
+    if (_checkingAndroidApk) return;
+
+    _checkingAndroidApk = true;
+
+    try {
+      await writeLog('ANDROID APK UPDATE CHECK START: $_appcastUrl');
+      final info = await _fetchAndroidApkUpdateInfo();
+      if (info == null) {
+        await writeLog('ANDROID APK UPDATE SKIPPED: invalid xml');
+        return;
+      }
+
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+      await writeLog(
+        'ANDROID APK UPDATE VERSION: current=${packageInfo.version}+$currentBuild, '
+        'remote=${info.version}+$info.buildNumber, url=${info.apkUrl}',
+      );
+
+      if (info.buildNumber <= currentBuild) {
+        await writeLog('ANDROID APK UPDATE NOT AVAILABLE');
+        return;
+      }
+
+      final shouldInstall = await _confirmAndroidApkUpdate(info);
+      if (shouldInstall != true) {
+        await writeLog('ANDROID APK UPDATE DECLINED');
+        return;
+      }
+
+      await _downloadAndOpenAndroidApk(info);
+    } catch (e, s) {
+      await writeLog('ANDROID APK UPDATE ERROR: $e');
+      await writeLog(s);
+    } finally {
+      _checkingAndroidApk = false;
+    }
+  }
+
+  Future<_AndroidApkUpdateInfo?> _fetchAndroidApkUpdateInfo() async {
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(Uri.parse(_appcastUrl));
+      final response = await request.close();
+      final body = await utf8.decodeStream(response);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await writeLog(
+          'ANDROID APK UPDATE HTTP ERROR: status=${response.statusCode}',
+        );
+        return null;
+      }
+
+      final document = XmlDocument.parse(body);
+      final item = document.findAllElements('item').firstOrNull;
+      if (item == null) return null;
+
+      final version = item.getElement('version')?.innerText.trim() ?? '';
+      final buildNumber =
+          int.tryParse(item.getElement('buildNumber')?.innerText.trim() ?? '');
+      final apkUrl = item.getElement('url')?.innerText.trim() ?? '';
+      final title = item.getElement('title')?.innerText.trim() ?? version;
+
+      if (buildNumber == null || apkUrl.isEmpty) return null;
+
+      return _AndroidApkUpdateInfo(
+        title: title,
+        version: version,
+        buildNumber: buildNumber,
+        apkUrl: apkUrl,
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<bool?> _confirmAndroidApkUpdate(_AndroidApkUpdateInfo info) async {
+    final context = appUpdateNavigatorKey.currentContext;
+    if (context == null) return true;
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Update available'),
+          content: Text(
+            '${info.title}\nVersion: ${info.version}+${info.buildNumber}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Later'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Update'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _downloadAndOpenAndroidApk(_AndroidApkUpdateInfo info) async {
+    if (_installingAndroidApk) return;
+    _installingAndroidApk = true;
+
+    HttpClient? client;
+    IOSink? sink;
+
+    try {
+      final directory = await getExternalStorageDirectory() ??
+          await getApplicationDocumentsDirectory();
+      final file = File(
+        '${directory.path}/pc_pos_${info.version}_${info.buildNumber}.apk',
+      );
+
+      await writeLog('ANDROID APK DOWNLOAD START: ${info.apkUrl}');
+      client = HttpClient();
+      final request = await client.getUrl(Uri.parse(info.apkUrl));
+      final response = await request.close();
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(
+          'Download APK failed: ${response.statusCode}',
+          uri: Uri.parse(info.apkUrl),
+        );
+      }
+
+      sink = file.openWrite();
+      await response.pipe(sink);
+      sink = null;
+
+      await writeLog('ANDROID APK DOWNLOAD DONE: ${file.path}');
+      final result = await OpenFilex.open(
+        file.path,
+        type: 'application/vnd.android.package-archive',
+      );
+      await writeLog(
+        'ANDROID APK INSTALL INTENT RESULT: ${result.type} ${result.message}',
+      );
+    } finally {
+      await sink?.close();
+      client?.close(force: true);
+      _installingAndroidApk = false;
+    }
   }
 
   Future<void> _checkInstallerUpdate() async {
@@ -113,4 +278,18 @@ class AppUpdateService with UpdaterListener {
   String _versionLabel(AppcastItem? item) {
     return item?.displayVersionString ?? item?.versionString ?? '';
   }
+}
+
+class _AndroidApkUpdateInfo {
+  const _AndroidApkUpdateInfo({
+    required this.title,
+    required this.version,
+    required this.buildNumber,
+    required this.apkUrl,
+  });
+
+  final String title;
+  final String version;
+  final int buildNumber;
+  final String apkUrl;
 }
