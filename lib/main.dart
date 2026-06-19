@@ -115,7 +115,7 @@ void main(List<String> args) async {
       theme: ThemeData(
         fontFamily: 'Roboto',
       ),
-      home: const AppSplashScreen(),
+      home: Platform.isWindows ? const AppSplashScreen() : const WebViewPage(),
     ),
   );
 
@@ -209,7 +209,8 @@ class _AppSplashScreenState extends State<AppSplashScreen> {
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 2), () {
+
+    Future.delayed(const Duration(milliseconds: 1200), () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const WebViewPage()),
@@ -224,8 +225,8 @@ class _AppSplashScreenState extends State<AppSplashScreen> {
       body: Center(
         child: Image(
           image: AssetImage('assets/logoSplashScreen.png'),
-          width: 240,
-          height: 240,
+          width: 480,
+          height: 120,
           fit: BoxFit.contain,
         ),
       ),
