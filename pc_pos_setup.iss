@@ -4,11 +4,11 @@
 [Setup]
 AppId={{147A48C2-0ADB-4166-810C-4ED83A4449D3}}
 AppName=Alliex
-AppVersion=1.1.10
+AppVersion=1.1.11
 DefaultDirName={localappdata}\Alliex
 DefaultGroupName=Alliex
 OutputDir=Output
-OutputBaseFilename=Alliex_Setup_1.1.10
+OutputBaseFilename=Alliex_Setup_1.1.11
 Compression=lzma
 SolidCompression=yes
 DisableProgramGroupPage=yes
@@ -19,10 +19,10 @@ Source: "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags:
 Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
-Name: "{group}\Alliex"; Filename: "{app}\Alliex.exe"
-Name: "{commondesktop}\Alliex"; Filename: "{app}\Alliex.exe"
+Name: "{group}\Alliex"; Filename: "{app}\pc_pos.exe"
+Name: "{commondesktop}\Alliex"; Filename: "{app}\pc_pos.exe"
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; Flags: waituntilterminated
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; Flags: waituntilterminated
-Filename: "{app}\Alliex.exe"; Description: "Launch Alliex"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\pc_pos.exe"; Description: "Launch Alliex"; Flags: nowait postinstall skipifsilent

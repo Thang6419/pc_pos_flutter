@@ -68,6 +68,19 @@ HWND _findCustomerDisplayHwnd() {
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: SystemUiOverlay.values,
+  );
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.white,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ),
+  );
 
 // WINDOW PHỤ - Flutter UI only
   if (_supportsWindowControls && args.isNotEmpty && args[0] == 'multi_window') {
@@ -114,6 +127,8 @@ void main(List<String> args) async {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         fontFamily: 'Roboto',
+        scaffoldBackgroundColor: Colors.white,
+        canvasColor: Colors.white,
       ),
       home: Platform.isWindows ? const AppSplashScreen() : const WebViewPage(),
     ),
