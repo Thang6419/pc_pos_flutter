@@ -68,6 +68,20 @@ HWND _findCustomerDisplayHwnd() {
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    unawaited(writeLog('FLUTTER ERROR: ${details.exceptionAsString()}'));
+    if (details.stack != null) {
+      unawaited(writeLog(details.stack));
+    }
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    unawaited(writeLog('PLATFORM ERROR: $error'));
+    unawaited(writeLog(stack));
+    return true;
+  };
+  await writeLog('APP MAIN START: pid=$pid, args=$args');
+
   SystemChrome.setEnabledSystemUIMode(
     SystemUiMode.manual,
     overlays: SystemUiOverlay.values,
@@ -290,6 +304,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     if (_supportsWindowControls) {
       windowManager.removeListener(this);
     }
+    androidWebViewController = null;
+    windowsWebViewController = null;
     super.dispose();
   }
 
@@ -366,6 +382,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   Future<void> _injectWindowsBridge() async {
+    if (_isClosingApp) return;
+
     final controller = windowsWebViewController;
     if (controller == null) return;
 
@@ -413,11 +431,24 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 })();
 ''';
 
-    await controller.runJavaScript(js);
+    try {
+      await controller.runJavaScript(js);
+    } catch (e) {
+      if (!_isClosingApp) {
+        await writeLog('WINDOWS BRIDGE INJECT ERROR: $e');
+      }
+    }
   }
 
   Future<dynamic> _handleNativeCall(
       String handlerName, List<dynamic> args) async {
+    if (_isClosingApp && handlerName != HandlerNames.closeApp) {
+      return {
+        'success': false,
+        'message': 'App is closing',
+      };
+    }
+
     switch (handlerName) {
       case HandlerNames.sendToCustomerDisplay:
         final data = args.isNotEmpty && args.first is Map
@@ -547,6 +578,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   }
 
   Future<void> _handleWindowsNativeMessage(String rawMessage) async {
+    if (_isClosingApp) return;
+
     String? id;
 
     try {
@@ -584,6 +617,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
     required bool ok,
     required dynamic payload,
   }) async {
+    if (_isClosingApp) return;
+
     final controller = windowsWebViewController;
     if (controller == null || id == null || id.isEmpty) return;
 
@@ -595,7 +630,13 @@ window.__nativeBridgeResolve(
 );
 ''';
 
-    await controller.runJavaScript(js);
+    try {
+      await controller.runJavaScript(js);
+    } catch (e) {
+      if (!_isClosingApp) {
+        await writeLog('WINDOWS NATIVE BRIDGE RESOLVE ERROR: $e');
+      }
+    }
   }
 
   void _registerAndroidHandlers(iaw.InAppWebViewController controller) {
@@ -956,26 +997,59 @@ window.__nativeBridgeResolve(
 
   Future<void> closeApp() async {
     // Hàm này sẽ đóng cửa sổ ứng dụng ngay lập tức
-    if (_isClosingApp) return;
+    if (_isClosingApp) {
+      await writeLog('APP CLOSE SKIPPED: already closing');
+      return;
+    }
     _isClosingApp = true;
 
-    await writeLog('APP CLOSE START');
+    await writeLog(
+      'APP CLOSE START: platform=${Platform.operatingSystem}, '
+      'mounted=$mounted, webReady=$_isWebViewReady, '
+      'hasWindowsWebView=${windowsWebViewController != null}, '
+      'hasAndroidWebView=${androidWebViewController != null}, '
+      'secondWindowId=$secondWindowId',
+    );
 
     try {
       if (!_supportsWindowControls) {
+        await writeLog('APP CLOSE MOBILE: clear controllers');
         androidWebViewController = null;
         windowsWebViewController = null;
+        await writeLog('APP CLOSE MOBILE: SystemNavigator.pop start');
         await SystemNavigator.pop();
+        await writeLog('APP CLOSE MOBILE: SystemNavigator.pop done');
         return;
       }
 
+      await writeLog('APP CLOSE WINDOWS: remove window listener');
       windowManager.removeListener(this);
+      await writeLog('APP CLOSE WINDOWS: setPreventClose(false) start');
+      await windowManager.setPreventClose(false);
+      await writeLog('APP CLOSE WINDOWS: setPreventClose(false) done');
 
+      if (mounted) {
+        await writeLog('APP CLOSE WINDOWS: detach webview start');
+        setState(() {
+          _isWebViewReady = false;
+          androidWebViewController = null;
+          windowsWebViewController = null;
+        });
+        await Future.delayed(const Duration(milliseconds: 150));
+        await writeLog('APP CLOSE WINDOWS: detach webview done');
+      } else {
+        await writeLog('APP CLOSE WINDOWS: widget unmounted, clear refs');
+        androidWebViewController = null;
+        windowsWebViewController = null;
+      }
+
+      await writeLog('APP CLOSE WINDOWS: get sub windows start');
       final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
       await writeLog('APP CLOSE SUB WINDOWS: $subWindowIds');
 
       for (final id in subWindowIds) {
         try {
+          await writeLog('APP CLOSE SUB WINDOW START: $id');
           await WindowController.fromWindowId(id).close();
           await writeLog('APP CLOSE SUB WINDOW DONE: $id');
         } catch (e) {
@@ -986,13 +1060,21 @@ window.__nativeBridgeResolve(
       secondWindow = null;
       secondWindowId = null;
 
-      await Future.delayed(const Duration(milliseconds: 300));
-      await writeLog('APP CLOSE PROCESS EXIT');
-      exit(0);
+      await Future.delayed(const Duration(milliseconds: 200));
+      await writeLog('APP CLOSE WINDOW DESTROY');
+      await windowManager.destroy();
+      await writeLog('APP CLOSE WINDOW DESTROY CALLED');
     } catch (e) {
       await writeLog('APP CLOSE ERROR: $e');
       if (_supportsWindowControls) {
-        exit(0);
+        try {
+          await writeLog('APP CLOSE FALLBACK DESTROY START');
+          await windowManager.destroy();
+          await writeLog('APP CLOSE FALLBACK DESTROY CALLED');
+        } catch (_) {
+          await writeLog('APP CLOSE FALLBACK EXIT');
+          exit(0);
+        }
       }
     }
   }
