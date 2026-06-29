@@ -13,6 +13,7 @@ import 'package:xml/xml.dart';
 const _appcastUrl = 'http://103.159.59.15:8082/api/version/check-version-xml';
 
 final appUpdateNavigatorKey = GlobalKey<NavigatorState>();
+final appUpdatePromptVisible = ValueNotifier<bool>(false);
 
 class AppUpdateService {
   AppUpdateService._();
@@ -32,9 +33,9 @@ class AppUpdateService {
     unawaited(_checkShorebirdPatch());
 
     if (Platform.isWindows || Platform.isMacOS) {
-      unawaited(_checkInstallerUpdate());
+      await _checkInstallerUpdate();
     } else if (Platform.isAndroid) {
-      unawaited(_checkAndroidApkUpdate());
+      await _checkAndroidApkUpdate();
     } else {
       await writeLog('APP UPDATE INSTALLER SKIPPED: unsupported platform');
     }
@@ -125,28 +126,45 @@ class AppUpdateService {
       return true;
     }
 
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Update available'),
-          content: Text(
-            '${info.title}\nVersion: ${info.version}+${info.buildNumber}',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Later'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Update'),
-            ),
-          ],
+    appUpdatePromptVisible.value = true;
+
+    try {
+      await Future.delayed(const Duration(milliseconds: 150));
+      final dialogContext = appUpdateNavigatorKey.currentContext;
+
+      if (dialogContext == null) {
+        await writeLog(
+          'ANDROID APK UPDATE PROMPT SKIPPED: no navigator after webview hide',
         );
-      },
-    );
+        return true;
+      }
+
+      return await showDialog<bool>(
+        // ignore: use_build_context_synchronously
+        context: dialogContext,
+        barrierDismissible: false,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Update available'),
+            content: Text(
+              '${info.title}\nVersion: ${info.version}+${info.buildNumber}',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Later'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Update'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      appUpdatePromptVisible.value = false;
+    }
   }
 
   Future<void> _downloadAndOpenAndroidApk(_AndroidApkUpdateInfo info) async {
@@ -202,7 +220,7 @@ class AppUpdateService {
 
     try {
       await writeLog('INSTALLER UPDATE CHECK START: $_appcastUrl');
-      final info = await _fetchAndroidApkUpdateInfo();
+      final info = await _fetchInstallerUpdateInfo();
       if (info == null) {
         await writeLog('INSTALLER UPDATE SKIPPED: invalid xml');
         return;
@@ -216,8 +234,7 @@ class AppUpdateService {
         'remote=${info.version}+${info.buildNumber}',
       );
 
-      if (info.buildNumber <= currentBuild &&
-          info.version == currentVersion) {
+      if (info.buildNumber <= currentBuild && info.version == currentVersion) {
         await writeLog('INSTALLER UPDATE NOT AVAILABLE');
         return;
       }
@@ -233,6 +250,68 @@ class AppUpdateService {
       await writeLog('INSTALLER UPDATE ERROR: $e');
       await writeLog(s);
     }
+  }
+
+  Future<_AndroidApkUpdateInfo?> _fetchInstallerUpdateInfo() async {
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(Uri.parse(_appcastUrl));
+      final response = await request.close();
+      final body = await utf8.decodeStream(response);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await writeLog(
+          'INSTALLER UPDATE HTTP ERROR: status=${response.statusCode}',
+        );
+        return null;
+      }
+
+      final document = XmlDocument.parse(body);
+      final item = document.findAllElements('item').firstOrNull;
+      if (item == null) return null;
+
+      final enclosure = item.getElement('enclosure');
+      if (enclosure == null) return null;
+
+      final installerUrl = enclosure.getAttribute('url')?.trim() ?? '';
+      final sparkleVersion = _readAttribute(enclosure, 'version').trim();
+      final title = item.getElement('title')?.innerText.trim() ??
+          (sparkleVersion.isEmpty ? 'Update available' : sparkleVersion);
+
+      if (installerUrl.isEmpty || sparkleVersion.isEmpty) return null;
+
+      final parsedVersion = _parseVersionAndBuild(sparkleVersion);
+      if (parsedVersion == null) return null;
+
+      return _AndroidApkUpdateInfo(
+        title: title,
+        version: parsedVersion.version,
+        buildNumber: parsedVersion.buildNumber,
+        apkUrl: installerUrl,
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  String _readAttribute(XmlElement element, String localName) {
+    for (final attribute in element.attributes) {
+      if (attribute.name.local == localName) {
+        return attribute.value;
+      }
+    }
+
+    return '';
+  }
+
+  _ParsedVersion? _parseVersionAndBuild(String value) {
+    final parts = value.split('+');
+    final version = parts.first.trim();
+    final buildNumber = parts.length > 1 ? int.tryParse(parts[1].trim()) : null;
+
+    if (version.isEmpty || buildNumber == null) return null;
+
+    return _ParsedVersion(version: version, buildNumber: buildNumber);
   }
 
   Future<void> _downloadAndOpenInstaller(_AndroidApkUpdateInfo info) async {
@@ -309,7 +388,6 @@ class AppUpdateService {
       await writeLog('SHOREBIRD UPDATE ERROR: $e');
     }
   }
-
 }
 
 class _AndroidApkUpdateInfo {
@@ -324,4 +402,14 @@ class _AndroidApkUpdateInfo {
   final String version;
   final int buildNumber;
   final String apkUrl;
+}
+
+class _ParsedVersion {
+  const _ParsedVersion({
+    required this.version,
+    required this.buildNumber,
+  });
+
+  final String version;
+  final int buildNumber;
 }

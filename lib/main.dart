@@ -157,7 +157,6 @@ void main(List<String> args) async {
 
   WidgetsBinding.instance.addPostFrameCallback((_) async {
     await Future.delayed(const Duration(milliseconds: 500));
-    await AppUpdateService.instance.start();
     if (_supportsWindowControls) {
       await windowManager.setResizable(true);
       await windowManager.setMaximizable(true);
@@ -301,8 +300,18 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   void initState() {
     super.initState();
     unawaited(() async {
-      await init();
-      await Future.delayed(const Duration(seconds: 1));
+      if (Platform.isWindows) {
+        await Future.delayed(const Duration(milliseconds: 300));
+        await AppUpdateService.instance.start();
+        if (!mounted) return;
+        await init();
+      } else {
+        await init();
+        await Future.delayed(const Duration(milliseconds: 500));
+        await AppUpdateService.instance.start();
+      }
+
+      await Future.delayed(const Duration(milliseconds: 500));
       await loadCustomerDisplayPreview();
     }());
     if (_supportsWindowControls) {
@@ -1219,7 +1228,19 @@ window.__nativeBridgeResolve(
       return const Center(child: CircularProgressIndicator());
     }
 
-    return WebViewWidget(controller: controller);
+    return ValueListenableBuilder<bool>(
+      valueListenable: appUpdatePromptVisible,
+      builder: (context, isPromptVisible, child) {
+        if (isPromptVisible) {
+          return const SizedBox.expand(
+            child: ColoredBox(color: Colors.white),
+          );
+        }
+
+        return child!;
+      },
+      child: WebViewWidget(controller: controller),
+    );
   }
 
   Widget _buildAndroidWebView() {
