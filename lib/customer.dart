@@ -20,6 +20,7 @@ class CustomerDisplayApp extends StatefulWidget {
 class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Map<String, dynamic> data = {};
   Map<String, dynamic>? previewResponse;
+  List<Map<String, dynamic>>? previewItems;
   String? previewDomain;
   String? qrValue;
   Map<String, dynamic> _asStringKeyMap(dynamic value) {
@@ -63,6 +64,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
 
     data = _asStringKeyMap(widget.initialData['data']);
     previewResponse = _asStringKeyMap(data['previewResponse']);
+    previewItems = _previewItemsFromResponse(previewResponse);
     final initialPreviewDomain = data['previewDomain']?.toString().trim();
     previewDomain = initialPreviewDomain == null || initialPreviewDomain.isEmpty
         ? null
@@ -78,8 +80,10 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
       if (call.method == 'update_customer_gallery') {
         final newData = _asStringKeyMap(call.arguments);
         final nextPreviewDomain = newData['previewDomain']?.toString().trim();
+        final nextPreviewResponse = _asStringKeyMap(newData['previewResponse']);
         setState(() {
-          previewResponse = _asStringKeyMap(newData['previewResponse']);
+          previewResponse = nextPreviewResponse;
+          previewItems = _previewItemsFromResponse(nextPreviewResponse);
           previewDomain = nextPreviewDomain == null || nextPreviewDomain.isEmpty
               ? null
               : nextPreviewDomain;
@@ -103,14 +107,14 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     return _asMapList(rawItems);
   }
 
-  List<Map<String, dynamic>>? get previewItems {
-    final response = previewResponse;
-
-    if (response != null && response['data'] is List) {
-      return _asMapList(response['data']);
+  List<Map<String, dynamic>>? _previewItemsFromResponse(
+    Map<String, dynamic>? response,
+  ) {
+    if (response == null || response['data'] is! List) {
+      return null;
     }
 
-    return null;
+    return _asMapList(response['data']);
   }
 
   int get total {

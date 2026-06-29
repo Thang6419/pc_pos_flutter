@@ -25,7 +25,7 @@ import 'package:webview_win_floating/webview_win_floating.dart';
 import 'utils/device_id_service.dart';
 
 const _customerDisplayTitle = 'Customer Display';
-const _customerDisplayDomain = 'http://10.12.79.77:8081';
+const _customerDisplayDomain = 'http://103.159.59.15:8082/api';
 int _customerDisplayHwndAddress = 0;
 
 bool get _supportsWindowControls => Platform.isWindows;
@@ -300,7 +300,11 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   @override
   void initState() {
     super.initState();
-    init();
+    unawaited(() async {
+      await init();
+      await Future.delayed(const Duration(seconds: 1));
+      await loadCustomerDisplayPreview();
+    }());
     if (_supportsWindowControls) {
       windowManager.addListener(this);
     }
@@ -774,8 +778,8 @@ window.__nativeBridgeResolve(
 
     try {
       final physicalId = await getPhysicalId();
-      final uri = Uri.parse(_customerDisplayDomain).replace(
-        path: '/api/setup/list-preview',
+      final uri =
+          Uri.parse('$_customerDisplayDomain/setup/list-preview').replace(
         queryParameters: {'physicalId': physicalId},
       );
 
@@ -783,7 +787,7 @@ window.__nativeBridgeResolve(
 
       client = HttpClient();
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.acceptHeader, '*/*');
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
 
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -797,7 +801,6 @@ window.__nativeBridgeResolve(
           'message': body,
         };
       }
-
       final responseData = decoded is Map
           ? Map<String, dynamic>.from(
               decoded.map((key, value) => MapEntry('$key', value)),

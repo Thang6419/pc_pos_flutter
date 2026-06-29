@@ -5,6 +5,9 @@
 #include "flutter_window.h"
 #include "utils.h"
 
+#include <flutter_inappwebview_windows/flutter_inappwebview_windows_plugin_c_api.h>
+#include <webview_win_floating/webview_win_floating_plugin_c_api.h>
+
 extern "C" void DesktopMultiWindowSetWindowCreatedCallback(
     void (*callback)(void *flutter_view_controller));
 
@@ -18,6 +21,13 @@ void ConfigureSecondaryWindow(void *flutter_view_controller)
   {
     return;
   }
+
+  FlutterInappwebviewWindowsPluginCApiRegisterWithRegistrar(
+      controller->engine()->GetRegistrarForPlugin(
+          "FlutterInappwebviewWindowsPluginCApi"));
+  WebviewWinFloatingPluginCApiRegisterWithRegistrar(
+      controller->engine()->GetRegistrarForPlugin(
+          "WebviewWinFloatingPluginCApi"));
 
   HWND content = controller->view()->GetNativeWindow();
   HWND window = ::GetAncestor(content, GA_ROOT);

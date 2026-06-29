@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:carousel_slider/carousel_slider.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
 enum _RemoteMediaStatus {
   unchecked,
@@ -212,7 +212,7 @@ class _LocalImageGalleryState extends State<LocalImageGallery> {
           );
       await response.drain<void>().timeout(const Duration(seconds: 1));
 
-      if (response.statusCode >= 200 && response.statusCode < 500) {
+      if (response.statusCode >= 200 && response.statusCode < 400) {
         return true;
       }
     } catch (_) {
@@ -229,7 +229,7 @@ class _LocalImageGalleryState extends State<LocalImageGallery> {
           );
       await response.drain<void>().timeout(const Duration(seconds: 1));
 
-      return response.statusCode >= 200 && response.statusCode < 500;
+      return response.statusCode >= 200 && response.statusCode < 400;
     } catch (_) {
       return false;
     } finally {
@@ -573,7 +573,12 @@ class _RemoteMediaItem {
       return rawUrl;
     }
 
-    return base.resolve(rawUrl).toString();
+    final basePath = base.path.endsWith('/')
+        ? base.path.substring(0, base.path.length - 1)
+        : base.path;
+    final mediaPath = rawUrl.startsWith('/') ? rawUrl : '/$rawUrl';
+
+    return base.replace(path: '$basePath$mediaPath').toString();
   }
 }
 
@@ -594,26 +599,11 @@ class RemoteVideoSlide extends StatefulWidget {
 }
 
 class _RemoteVideoSlideState extends State<RemoteVideoSlide> {
-  late final WebViewController controller;
+  InAppWebViewController? controller;
 
   @override
   void initState() {
     super.initState();
-
-    controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        'VideoBridge',
-        onMessageReceived: (message) {
-          if (message.message == 'ended') {
-            widget.onEnded();
-          }
-          if (message.message == 'error') {
-            widget.onError();
-          }
-        },
-      )
-      ..loadHtmlString(_videoHtml(widget.url));
   }
 
   @override
@@ -621,14 +611,49 @@ class _RemoteVideoSlideState extends State<RemoteVideoSlide> {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.url != widget.url) {
-      controller.loadHtmlString(_videoHtml(widget.url));
+      unawaited(controller?.loadData(data: _videoHtml(widget.url)));
     }
+  }
+
+  @override
+  void dispose() {
+    controller = null;
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return SizedBox.expand(
-      child: WebViewWidget(controller: controller),
+      child: InAppWebView(
+        initialData: InAppWebViewInitialData(
+          data: _videoHtml(widget.url),
+        ),
+        initialSettings: InAppWebViewSettings(
+          javaScriptEnabled: true,
+          mediaPlaybackRequiresUserGesture: false,
+          allowsInlineMediaPlayback: true,
+          transparentBackground: false,
+          disableContextMenu: true,
+        ),
+        onWebViewCreated: (webViewController) {
+          controller = webViewController;
+          webViewController.addJavaScriptHandler(
+            handlerName: 'VideoBridge',
+            callback: (args) {
+              final message = args.isNotEmpty ? args.first?.toString() : '';
+
+              if (message == 'ended') {
+                widget.onEnded();
+              }
+              if (message == 'error') {
+                widget.onError();
+              }
+
+              return null;
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -660,14 +685,21 @@ class _RemoteVideoSlideState extends State<RemoteVideoSlide> {
   <video id="video" src="$escapedUrl" autoplay muted playsinline></video>
   <script>
     const video = document.getElementById('video');
+    let notified = false;
+    function notify(message) {
+      if (notified) return;
+      notified = true;
+      VideoBridge.postMessage(message);
+    }
     video.muted = true;
     video.volume = 0;
     video.controls = false;
+    video.preload = 'auto';
     video.addEventListener('ended', function () {
-      VideoBridge.postMessage('ended');
+      window.flutter_inappwebview.callHandler('VideoBridge', 'ended');
     });
     video.addEventListener('error', function () {
-      VideoBridge.postMessage('error');
+      window.flutter_inappwebview.callHandler('VideoBridge', 'error');
     });
     video.play().catch(function () {});
   </script>
