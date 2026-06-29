@@ -2,6 +2,7 @@
 
 abstract final class HandlerNames {
   static const String sendToCustomerDisplay = 'sendToCustomerDisplay';
+  static const String showGallery = 'showGallery';
   static const String showCustomerQr = 'showCustomerQr';
   static const String requestDeviceId = 'requestDeviceId';
   static const String closeApp = 'closeApp';

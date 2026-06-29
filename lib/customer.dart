@@ -19,6 +19,8 @@ class CustomerDisplayApp extends StatefulWidget {
 
 class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
   Map<String, dynamic> data = {};
+  Map<String, dynamic>? previewResponse;
+  String? previewDomain;
   String? qrValue;
   Map<String, dynamic> _asStringKeyMap(dynamic value) {
     if (value is String && value.isNotEmpty) {
@@ -60,11 +62,27 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     super.initState();
 
     data = _asStringKeyMap(widget.initialData['data']);
+    previewResponse = _asStringKeyMap(data['previewResponse']);
+    final initialPreviewDomain = data['previewDomain']?.toString().trim();
+    previewDomain = initialPreviewDomain == null || initialPreviewDomain.isEmpty
+        ? null
+        : initialPreviewDomain;
+
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'update_customer_display') {
         final newData = _asStringKeyMap(call.arguments);
         setState(() {
           data = newData;
+        });
+      }
+      if (call.method == 'update_customer_gallery') {
+        final newData = _asStringKeyMap(call.arguments);
+        final nextPreviewDomain = newData['previewDomain']?.toString().trim();
+        setState(() {
+          previewResponse = _asStringKeyMap(newData['previewResponse']);
+          previewDomain = nextPreviewDomain == null || nextPreviewDomain.isEmpty
+              ? null
+              : nextPreviewDomain;
         });
       }
       if (call.method == 'show_customer_qr') {
@@ -83,6 +101,16 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     if (rawItems is! List) return [];
 
     return _asMapList(rawItems);
+  }
+
+  List<Map<String, dynamic>>? get previewItems {
+    final response = previewResponse;
+
+    if (response != null && response['data'] is List) {
+      return _asMapList(response['data']);
+    }
+
+    return null;
   }
 
   int get total {
@@ -110,6 +138,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     final orders = _asMapList(data['orders']);
     final subFooter = _asMapList(data['subFooter']);
     final footer = _asStringKeyMap(data['footer']);
+    final mediaItems = previewItems;
 
     return MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -120,8 +149,12 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
             backgroundColor: const Color(0xFFF7F7F7),
             body: Stack(children: [
               // BACKGROUND: Gallery full màn hình
-              const Positioned.fill(
-                child: LocalImageGallery(),
+              Positioned.fill(
+                child: LocalImageGallery(
+                  remoteItems: mediaItems,
+                  remoteDomain: previewDomain,
+                  useRemoteItems: mediaItems != null,
+                ),
               ),
 
               // HEADER overlay
@@ -143,114 +176,115 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
               ),
 
               // RIGHT ORDER LIST overlay
-              Positioned(
-                top: 56,
-                right: 0,
-                bottom: 0,
-                width: 440,
-                child: Container(
-                    color: Colors.white,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _header(headers),
-                        Expanded(
-                          flex: 1,
-                          child: ListView.separated(
-                            padding: EdgeInsets.zero,
-                            itemCount: orders.length,
-                            separatorBuilder: (_, __) => const Divider(
-                              height: 0,
-                              thickness: 0,
-                              color: Color(0xFFE5E7EB),
-                            ),
-                            itemBuilder: (context, index) {
-                              final order = orders[index];
+              if (orders.isNotEmpty)
+                Positioned(
+                  top: 56,
+                  right: 0,
+                  bottom: 0,
+                  width: 440,
+                  child: Container(
+                      color: Colors.white,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _header(headers),
+                          Expanded(
+                            flex: 1,
+                            child: ListView.separated(
+                              padding: EdgeInsets.zero,
+                              itemCount: orders.length,
+                              separatorBuilder: (_, __) => const Divider(
+                                height: 0,
+                                thickness: 0,
+                                color: Color(0xFFE5E7EB),
+                              ),
+                              itemBuilder: (context, index) {
+                                final order = orders[index];
 
-                              return Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: const BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.all(
-                                    Radius.circular(4),
+                                return Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.all(
+                                      Radius.circular(4),
+                                    ),
+                                    border: Border(
+                                      bottom: BorderSide(
+                                        color: Color(0xFFE5E8EB),
+                                        width: 1,
+                                      ),
+                                    ),
                                   ),
-                                  border: Border(
-                                    bottom: BorderSide(
-                                      color: Color(0xFFE5E8EB),
-                                      width: 1,
-                                    ),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 20,
+                                        child: Text(
+                                          '${index + 1}.',
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                            height: 16 / 12,
+                                            color: Color(0xFF191919),
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 12,
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          '${order['name'] ?? ''}',
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                            height: 16 / 12,
+                                            color: Color(0xFF191919),
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 12,
+                                      ),
+                                      SizedBox(
+                                        width: 30,
+                                        child: Text(
+                                          'x${order['qty'] ?? ''}',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                            height: 16 / 12,
+                                            color: Color(0xFF191919),
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 12,
+                                      ),
+                                      SizedBox(
+                                        width: 80,
+                                        child: Text(
+                                          '${order['price'] ?? ''}',
+                                          textAlign: TextAlign.right,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                            height: 16 / 12,
+                                            color: Color(0xFF1672DF),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 20,
-                                      child: Text(
-                                        '${index + 1}.',
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                          height: 16 / 12,
-                                          color: Color(0xFF191919),
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      width: 12,
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        '${order['name'] ?? ''}',
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                          height: 16 / 12,
-                                          color: Color(0xFF191919),
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      width: 12,
-                                    ),
-                                    SizedBox(
-                                      width: 30,
-                                      child: Text(
-                                        'x${order['qty'] ?? ''}',
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                          height: 16 / 12,
-                                          color: Color(0xFF191919),
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      width: 12,
-                                    ),
-                                    SizedBox(
-                                      width: 80,
-                                      child: Text(
-                                        '${order['price'] ?? ''}',
-                                        textAlign: TextAlign.right,
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                          height: 16 / 12,
-                                          color: Color(0xFF1672DF),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                                );
+                              },
+                            ),
                           ),
-                        ),
-                        _summary(subFooter, footer),
-                      ],
-                    )),
-              ),
+                          _summary(subFooter, footer),
+                        ],
+                      )),
+                ),
               if (qrValue != null)
                 Positioned.fill(
                   child: Container(

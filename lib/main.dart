@@ -25,6 +25,7 @@ import 'package:webview_win_floating/webview_win_floating.dart';
 import 'utils/device_id_service.dart';
 
 const _customerDisplayTitle = 'Customer Display';
+const _customerDisplayDomain = 'http://10.12.79.77:8081';
 int _customerDisplayHwndAddress = 0;
 
 bool get _supportsWindowControls => Platform.isWindows;
@@ -464,6 +465,16 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         await sendToCustomerDisplay(data);
         return {'success': true};
 
+      case HandlerNames.showGallery:
+        if (!_supportsWindowControls) {
+          return {
+            'success': false,
+            'message': 'showGallery only supports Windows',
+          };
+        }
+
+        return await loadCustomerDisplayPreview();
+
       case HandlerNames.showCustomerQr:
         String? value;
 
@@ -648,6 +659,7 @@ window.__nativeBridgeResolve(
   void _registerAndroidHandlers(iaw.InAppWebViewController controller) {
     final handlerNames = [
       HandlerNames.sendToCustomerDisplay,
+      HandlerNames.showGallery,
       HandlerNames.showCustomerQr,
       HandlerNames.requestDeviceId,
       HandlerNames.closeApp,
@@ -748,6 +760,72 @@ window.__nativeBridgeResolve(
 
   Future<String> getPhysicalId() async {
     return await getMachineGuid() ?? await loadDeviceId();
+  }
+
+  Future<Map<String, dynamic>> loadCustomerDisplayPreview() async {
+    if (!_supportsWindowControls) {
+      return {
+        'success': false,
+        'message': 'Customer display preview only supports Windows',
+      };
+    }
+
+    HttpClient? client;
+
+    try {
+      final physicalId = await getPhysicalId();
+      final uri = Uri.parse(_customerDisplayDomain).replace(
+        path: '/api/setup/list-preview',
+        queryParameters: {'physicalId': physicalId},
+      );
+
+      await writeLog('CUSTOMER DISPLAY PREVIEW REQUEST: $uri');
+
+      client = HttpClient();
+      final request = await client.getUrl(uri);
+      request.headers.set(HttpHeaders.acceptHeader, '*/*');
+
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(body);
+      } catch (_) {
+        decoded = {
+          'status': response.statusCode,
+          'message': body,
+        };
+      }
+
+      final responseData = decoded is Map
+          ? Map<String, dynamic>.from(
+              decoded.map((key, value) => MapEntry('$key', value)),
+            )
+          : <String, dynamic>{'data': decoded};
+
+      final payload = <String, dynamic>{
+        'previewDomain': _customerDisplayDomain,
+        'previewResponse': responseData,
+      };
+
+      await sendGalleryToCustomerDisplay(payload);
+
+      return {
+        'success': response.statusCode >= 200 && response.statusCode < 300,
+        'statusCode': response.statusCode,
+        'physicalId': physicalId,
+        'data': responseData,
+      };
+    } catch (e) {
+      await writeLog('CUSTOMER DISPLAY PREVIEW ERROR: $e');
+      return {
+        'success': false,
+        'message': e.toString(),
+      };
+    } finally {
+      client?.close(force: true);
+    }
   }
 
   // void _showDeviceIdAlert({String id = '', String title = 'Device ID'}) {
@@ -948,6 +1026,34 @@ window.__nativeBridgeResolve(
       );
     } catch (e) {
       await writeLog('SEND TO CUSTOMER DISPLAY ERROR: $e');
+    }
+  }
+
+  Future<void> sendGalleryToCustomerDisplay(Map<String, dynamic> data) async {
+    if (!_supportsWindowControls) {
+      await writeLog(
+          'SEND GALLERY TO CUSTOMER DISPLAY SKIPPED: unsupported platform');
+      return;
+    }
+
+    try {
+      if (_isOpeningSecondWindow) return;
+
+      if (secondWindowId == null ||
+          !(await DesktopMultiWindow.getAllSubWindowIds())
+              .contains(secondWindowId)) {
+        await openSecondWindow();
+      }
+
+      if (secondWindowId == null) return;
+
+      await DesktopMultiWindow.invokeMethod(
+        secondWindowId!,
+        'update_customer_gallery',
+        jsonEncode(data),
+      );
+    } catch (e) {
+      await writeLog('SEND GALLERY TO CUSTOMER DISPLAY ERROR: $e');
     }
   }
 
