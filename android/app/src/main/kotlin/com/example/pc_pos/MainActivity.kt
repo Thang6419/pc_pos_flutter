@@ -1,5 +1,6 @@
 package com.example.pc_pos
 
+import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -12,6 +13,8 @@ class MainActivity : FlutterActivity() {
     private var keepSplashOnScreen = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        lockPortrait()
+
         val splashScreen = installSplashScreen()
         splashScreen.setKeepOnScreenCondition { keepSplashOnScreen }
 
@@ -25,7 +28,12 @@ class MainActivity : FlutterActivity() {
 
     override fun onPostResume() {
         super.onPostResume()
+        lockPortrait()
         setWhiteSystemBars()
+    }
+
+    private fun lockPortrait() {
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
 
     private fun setWhiteSystemBars() {

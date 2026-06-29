@@ -82,6 +82,12 @@ void main(List<String> args) async {
   };
   await writeLog('APP MAIN START: pid=$pid, args=$args');
 
+  if (Platform.isAndroid || Platform.isIOS) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+  }
+
   SystemChrome.setEnabledSystemUIMode(
     SystemUiMode.manual,
     overlays: SystemUiOverlay.values,
