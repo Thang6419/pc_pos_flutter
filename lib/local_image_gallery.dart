@@ -674,9 +674,10 @@ class _RemoteVideoSlideState extends State<RemoteVideoSlide> {
       background: #000;
     }
     video {
+      display: block;
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
       background: #000;
     }
   </style>
