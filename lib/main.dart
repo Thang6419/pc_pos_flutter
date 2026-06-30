@@ -311,8 +311,10 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         await AppUpdateService.instance.start();
       }
 
-      await Future.delayed(const Duration(milliseconds: 500));
-      await loadCustomerDisplayPreview();
+      if (Platform.isWindows) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        await openSecondWindow();
+      }
     }());
     if (_supportsWindowControls) {
       windowManager.addListener(this);
@@ -485,7 +487,8 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           };
         }
 
-        return await loadCustomerDisplayPreview();
+        await openSecondWindow();
+        return {'success': true};
 
       case HandlerNames.showCustomerQr:
         String? value;
@@ -1003,6 +1006,7 @@ window.__nativeBridgeResolve(
             await Future.delayed(const Duration(milliseconds: 300));
             await forceCustomerDisplayFullScreen(targetDisplay);
             await writeLog('EXISTING SECOND WINDOW SHOWN');
+            await loadCustomerDisplayPreview();
             return;
           } catch (e) {
             await writeLog('EXISTING SECOND WINDOW SHOW ERROR: $e');
@@ -1052,6 +1056,7 @@ window.__nativeBridgeResolve(
 
       await writeLog(
           'SECOND WINDOW FULLSCREEN FRAME: $frame SCALE: $scaleFactor');
+      await loadCustomerDisplayPreview();
     } catch (e) {
       await writeLog('OPEN SECOND WINDOW ERROR: $e');
     } finally {
@@ -1099,15 +1104,13 @@ window.__nativeBridgeResolve(
     }
 
     try {
-      if (_isOpeningSecondWindow) return;
+      final subWindowIds = await DesktopMultiWindow.getAllSubWindowIds();
+      final hasSecondWindow =
+          secondWindowId != null && subWindowIds.contains(secondWindowId);
 
-      if (secondWindowId == null ||
-          !(await DesktopMultiWindow.getAllSubWindowIds())
-              .contains(secondWindowId)) {
-        await openSecondWindow();
+      if (!hasSecondWindow) {
+        return;
       }
-
-      if (secondWindowId == null) return;
 
       await DesktopMultiWindow.invokeMethod(
         secondWindowId!,
