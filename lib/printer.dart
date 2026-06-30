@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:image/image.dart' as img;
+import 'package:win32/win32.dart';
 
 class HtmlReceiptPrinter {
   HtmlReceiptPrinter({
@@ -32,6 +35,7 @@ class HtmlReceiptPrinter {
 
     try {
       final image = await _buildImageFromHtml(html);
+      final bytes = await _buildImageBytes(image);
 
       socket = await Socket.connect(
         ip,
@@ -40,23 +44,12 @@ class HtmlReceiptPrinter {
       );
 
       socket.setOption(SocketOption.tcpNoDelay, true);
-
-      final profile = await CapabilityProfile.load();
-      final generator = Generator(paperSize, profile);
-
-      final bytes = <int>[
-        ...generator.reset(),
-        ...generator.imageRaster(image),
-        ...generator.feed(4),
-        ...generator.cut(),
-      ];
-
       socket.add(bytes);
       await socket.flush();
 
       await Future.delayed(const Duration(milliseconds: 500));
     } catch (e) {
-      throw Exception('Lỗi in HTML: $e');
+      throw Exception('Loi in HTML: $e');
     } finally {
       await socket?.close();
       socket?.destroy();
@@ -72,18 +65,7 @@ class HtmlReceiptPrinter {
     Socket? socket;
 
     try {
-      final imageBytes = base64Decode(_normalizeBase64Image(imageBase64));
-      final decoded = img.decodeImage(imageBytes);
-
-      if (decoded == null) {
-        throw Exception('Không decode được ảnh');
-      }
-
-      final image = img.copyResize(
-        decoded,
-        width: receiptWidth,
-        interpolation: img.Interpolation.nearest,
-      );
+      final bytes = await _buildImagePrintBytes(imageBase64);
 
       socket = await Socket.connect(
         ip,
@@ -92,27 +74,153 @@ class HtmlReceiptPrinter {
       );
 
       socket.setOption(SocketOption.tcpNoDelay, true);
-
-      final profile = await CapabilityProfile.load();
-      final generator = Generator(paperSize, profile);
-
-      final bytes = <int>[
-        ...generator.reset(),
-        ...generator.imageRaster(image),
-        ...generator.feed(4),
-        ...generator.cut(),
-      ];
-
       socket.add(bytes);
       await socket.flush();
 
       await Future.delayed(const Duration(milliseconds: 500));
     } catch (e) {
-      throw Exception('Lỗi in ảnh: $e');
+      throw Exception('Loi in anh: $e');
     } finally {
       await socket?.close();
       socket?.destroy();
       dispose();
+    }
+  }
+
+  Future<void> printImageByPrinterName({
+    required String imageBase64,
+    required String printerName,
+  }) async {
+    if (!Platform.isWindows) {
+      throw Exception('printImageByPrinterName only supports Windows');
+    }
+
+    try {
+      final bytes = await _buildImagePrintBytes(imageBase64);
+
+      await _writeRawBytesToWindowsPrinter(
+        printerName: printerName,
+        bytes: bytes,
+        documentName: 'Alliex image receipt',
+      );
+    } catch (e) {
+      throw Exception('Loi in anh theo printerName: $e');
+    } finally {
+      dispose();
+    }
+  }
+
+  Future<List<int>> _buildImagePrintBytes(String imageBase64) async {
+    final imageBytes = base64Decode(_normalizeBase64Image(imageBase64));
+    final decoded = img.decodeImage(imageBytes);
+
+    if (decoded == null) {
+      throw Exception('Khong decode duoc anh');
+    }
+
+    final image = img.copyResize(
+      decoded,
+      width: receiptWidth,
+      interpolation: img.Interpolation.nearest,
+    );
+
+    return _buildImageBytes(image);
+  }
+
+  Future<List<int>> _buildImageBytes(img.Image image) async {
+    final profile = await CapabilityProfile.load();
+    final generator = Generator(paperSize, profile);
+
+    return <int>[
+      ...generator.reset(),
+      ...generator.imageRaster(image),
+      ...generator.feed(4),
+      ...generator.cut(),
+    ];
+  }
+
+  Future<void> _writeRawBytesToWindowsPrinter({
+    required String printerName,
+    required List<int> bytes,
+    required String documentName,
+  }) async {
+    final printerNamePtr = printerName.toNativeUtf16();
+    final printerHandlePtr = calloc<Pointer>();
+    final docInfo = calloc<DOC_INFO_1>();
+    final documentNamePtr = documentName.toNativeUtf16();
+    final dataTypePtr = 'RAW'.toNativeUtf16();
+    final written = calloc<Uint32>();
+    final buffer = calloc<Uint8>(bytes.length);
+
+    var docStarted = false;
+    var pageStarted = false;
+
+    try {
+      buffer.asTypedList(bytes.length).setAll(0, bytes);
+
+      final openResult = OpenPrinter(
+        PCWSTR(printerNamePtr),
+        printerHandlePtr,
+        nullptr,
+      );
+
+      if (!openResult.value) {
+        throw Exception(
+          'Khong mo duoc printer "$printerName": ${openResult.error}',
+        );
+      }
+
+      final printerHandle = PRINTER_HANDLE(printerHandlePtr.value);
+
+      docInfo.ref.pDocName = PWSTR(documentNamePtr);
+      docInfo.ref.pOutputFile = PWSTR(nullptr.cast<Utf16>());
+      docInfo.ref.pDatatype = PWSTR(dataTypePtr);
+
+      final docId = StartDocPrinter(printerHandle, 1, docInfo);
+      if (docId == 0) {
+        throw Exception('Khong start duoc print document');
+      }
+      docStarted = true;
+
+      if (!StartPagePrinter(printerHandle)) {
+        throw Exception('Khong start duoc print page');
+      }
+      pageStarted = true;
+
+      if (!WritePrinter(
+        printerHandle,
+        buffer.cast(),
+        bytes.length,
+        written,
+      )) {
+        throw Exception('Ghi du lieu vao printer that bai');
+      }
+
+      if (written.value != bytes.length) {
+        throw Exception(
+          'Ghi thieu du lieu vao printer: ${written.value}/${bytes.length}',
+        );
+      }
+    } finally {
+      final printerHandle = PRINTER_HANDLE(printerHandlePtr.value);
+
+      if (printerHandle.address != 0) {
+        if (pageStarted) {
+          EndPagePrinter(printerHandle);
+        }
+        if (docStarted) {
+          EndDocPrinter(printerHandle);
+        }
+        ClosePrinter(printerHandle);
+      }
+
+      calloc.free(printerNamePtr);
+      calloc.free(printerHandlePtr);
+      calloc.free(docInfo);
+      calloc.free(documentNamePtr);
+      calloc.free(dataTypePtr);
+      calloc.free(written);
+      calloc.free(buffer);
     }
   }
 
@@ -126,7 +234,7 @@ class HtmlReceiptPrinter {
 
       final controller = _controller;
       if (controller == null) {
-        throw Exception('Print WebView chưa sẵn sàng');
+        throw Exception('Print WebView chua san sang');
       }
 
       await _waitForImages(controller);
@@ -151,12 +259,12 @@ class HtmlReceiptPrinter {
       final screenshot = await controller.takeScreenshot();
 
       if (screenshot == null) {
-        throw Exception('Không chụp được ảnh hóa đơn');
+        throw Exception('Khong chup duoc anh hoa don');
       }
 
       final decoded = img.decodeImage(screenshot);
       if (decoded == null) {
-        throw Exception('Không decode được ảnh hóa đơn');
+        throw Exception('Khong decode duoc anh hoa don');
       }
 
       return img.copyResize(

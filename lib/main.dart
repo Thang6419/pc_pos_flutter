@@ -468,7 +468,6 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
         'message': 'App is closing',
       };
     }
-
     switch (handlerName) {
       case HandlerNames.sendToCustomerDisplay:
         final data = args.isNotEmpty && args.first is Map
@@ -567,14 +566,25 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
             : <String, dynamic>{};
 
         final ip = data['ip']?.toString() ?? '';
+        print('PRINT IMAGE IP: $ip');
         final port = int.tryParse(data['port']?.toString() ?? '') ?? 9100;
         final imageBase64 =
             data['imageBase64']?.toString() ?? data['image']?.toString() ?? '';
 
-        if (ip.isEmpty || imageBase64.isEmpty) {
+        if (imageBase64.isEmpty) {
           return {
             'success': false,
             'message': 'Thiếu ip hoặc imageBase64',
+          };
+        }
+
+        if (ip.isEmpty) {
+          await writeLog('PRINT IMAGE SKIPPED: missing ip');
+
+          return {
+            'success': true,
+            'skipped': true,
+            'message': 'Missing ip, skipped network image print',
           };
         }
 
@@ -584,9 +594,48 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
           paperSize: PaperSize.mm80,
         );
 
-        await printer.printImage(
-          ip: ip,
-          port: port,
+        try {
+          await printer.printImage(
+            ip: ip,
+            port: port,
+            imageBase64: imageBase64,
+          );
+
+          return {'success': true};
+        } catch (e) {
+          await writeLog('PRINT IMAGE ERROR: $e');
+
+          return {
+            'success': true,
+            'skipped': true,
+            'message': e.toString(),
+          };
+        }
+
+      case HandlerNames.printImageByPrinterName:
+        final data = args.isNotEmpty && args.first is Map
+            ? Map<String, dynamic>.from(args.first as Map)
+            : <String, dynamic>{};
+
+        final printerName = data['printerName']?.toString().trim() ?? '';
+        final imageBase64 =
+            data['imageBase64']?.toString() ?? data['image']?.toString() ?? '';
+
+        if (printerName.isEmpty || imageBase64.isEmpty) {
+          return {
+            'success': false,
+            'message': 'Thieu printerName hoac imageBase64',
+          };
+        }
+
+        final printer = HtmlReceiptPrinter(
+          context: context,
+          receiptWidth: 576,
+          paperSize: PaperSize.mm80,
+        );
+
+        await printer.printImageByPrinterName(
+          printerName: printerName,
           imageBase64: imageBase64,
         );
 
@@ -682,6 +731,7 @@ window.__nativeBridgeResolve(
       HandlerNames.openMinimizeWindow,
       HandlerNames.print,
       HandlerNames.printImage,
+      HandlerNames.printImageByPrinterName,
       HandlerNames.sendBytesToNetworkPrinter,
     ];
 
@@ -786,7 +836,7 @@ window.__nativeBridgeResolve(
     HttpClient? client;
 
     try {
-      final physicalId = await getPhysicalId();
+      final physicalId = await loadDeviceId();
       final uri =
           Uri.parse('$_customerDisplayDomain/setup/list-preview').replace(
         queryParameters: {'physicalId': physicalId},
