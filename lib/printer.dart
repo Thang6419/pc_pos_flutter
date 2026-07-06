@@ -23,7 +23,8 @@ class HtmlReceiptPrinter {
   final PaperSize paperSize;
 
   static final Map<String, Future<void>> _printQueues = {};
-  static const Duration _postCutDelay = Duration(milliseconds: 1200);
+  static const Duration _minPostCutDelay = Duration(milliseconds: 1200);
+  static const Duration _maxPostCutDelay = Duration(milliseconds: 6000);
   static int _jobSequence = 0;
 
   double _webViewHeight = 2000;
@@ -224,10 +225,12 @@ class HtmlReceiptPrinter {
         'PRINT_SOCKET_FLUSHED job=$jobId '
         'elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
+      final postCutDelay = _postCutDelayForBytes(bytes.length);
       await _logPrint(
-        'PRINT_POST_CUT_WAIT job=$jobId delayMs=${_postCutDelay.inMilliseconds}',
+        'PRINT_POST_CUT_WAIT job=$jobId bytes=${bytes.length} '
+        'delayMs=${postCutDelay.inMilliseconds}',
       );
-      await Future.delayed(_postCutDelay);
+      await Future.delayed(postCutDelay);
     } finally {
       await socket?.close();
       socket?.destroy();
@@ -286,13 +289,14 @@ class HtmlReceiptPrinter {
       ...generator.reset(),
       ...generator.imageRaster(image),
       ...generator.feed(6),
-      ...generator.cut(),
+      ..._fullCut(),
       ...generator.reset(),
     ];
 
     await _logPrint(
       'PRINT_ESC_POS_BYTES job=$jobId source=$source bytes=${bytes.length} '
-      'hasCut=${_containsCutCommand(bytes)} tailHex="${_tailHex(bytes)}"',
+      'cutMode=gs-v-0x00 hasCut=${_containsCutCommand(bytes)} '
+      'tailHex="${_tailHex(bytes)}"',
     );
 
     return bytes;
@@ -396,10 +400,12 @@ class HtmlReceiptPrinter {
         'elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
 
+      final postCutDelay = _postCutDelayForBytes(bytes.length);
       await _logPrint(
-        'PRINT_POST_CUT_WAIT job=$jobId delayMs=${_postCutDelay.inMilliseconds}',
+        'PRINT_POST_CUT_WAIT job=$jobId bytes=${bytes.length} '
+        'delayMs=${postCutDelay.inMilliseconds}',
       );
-      await Future.delayed(_postCutDelay);
+      await Future.delayed(postCutDelay);
     } finally {
       final printerHandle = PRINTER_HANDLE(printerHandlePtr.value);
 
@@ -468,6 +474,26 @@ class HtmlReceiptPrinter {
     }
 
     return false;
+  }
+
+  List<int> _fullCut() {
+    return const <int>[
+      0x1D,
+      0x56,
+      0x00,
+    ];
+  }
+
+  Duration _postCutDelayForBytes(int byteCount) {
+    final extraChunks = (byteCount / 30000).ceil();
+    final delayMs = _minPostCutDelay.inMilliseconds + (extraChunks * 800);
+
+    return Duration(
+      milliseconds: delayMs.clamp(
+        _minPostCutDelay.inMilliseconds,
+        _maxPostCutDelay.inMilliseconds,
+      ),
+    );
   }
 
   Future<img.Image> _buildImageFromHtml(String html) async {
