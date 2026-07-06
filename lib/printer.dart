@@ -21,6 +21,9 @@ class HtmlReceiptPrinter {
   final int receiptWidth;
   final PaperSize paperSize;
 
+  static final Map<String, Future<void>> _printQueues = {};
+  static const Duration _postCutDelay = Duration(milliseconds: 1200);
+
   double _webViewHeight = 2000;
   OverlayEntry? _overlayEntry;
   InAppWebViewController? _controller;
@@ -31,30 +34,22 @@ class HtmlReceiptPrinter {
     required String ip,
     int port = 9100,
   }) async {
-    Socket? socket;
+    await _enqueuePrint('network:$ip:$port', () async {
+      try {
+        final image = await _buildImageFromHtml(html);
+        final bytes = await _buildImageBytes(image);
 
-    try {
-      final image = await _buildImageFromHtml(html);
-      final bytes = await _buildImageBytes(image);
-
-      socket = await Socket.connect(
-        ip,
-        port,
-        timeout: const Duration(seconds: 3),
-      );
-
-      socket.setOption(SocketOption.tcpNoDelay, true);
-      socket.add(bytes);
-      await socket.flush();
-
-      await Future.delayed(const Duration(milliseconds: 500));
-    } catch (e) {
-      throw Exception('Loi in HTML: $e');
-    } finally {
-      await socket?.close();
-      socket?.destroy();
-      dispose();
-    }
+        await _sendNetworkBytes(
+          ip: ip,
+          port: port,
+          bytes: bytes,
+        );
+      } catch (e) {
+        throw Exception('Loi in HTML: $e');
+      } finally {
+        dispose();
+      }
+    });
   }
 
   Future<void> printImage({
@@ -62,29 +57,21 @@ class HtmlReceiptPrinter {
     required String ip,
     int port = 9100,
   }) async {
-    Socket? socket;
+    await _enqueuePrint('network:$ip:$port', () async {
+      try {
+        final bytes = await _buildImagePrintBytes(imageBase64);
 
-    try {
-      final bytes = await _buildImagePrintBytes(imageBase64);
-
-      socket = await Socket.connect(
-        ip,
-        port,
-        timeout: const Duration(seconds: 3),
-      );
-
-      socket.setOption(SocketOption.tcpNoDelay, true);
-      socket.add(bytes);
-      await socket.flush();
-
-      await Future.delayed(const Duration(milliseconds: 500));
-    } catch (e) {
-      throw Exception('Loi in anh: $e');
-    } finally {
-      await socket?.close();
-      socket?.destroy();
-      dispose();
-    }
+        await _sendNetworkBytes(
+          ip: ip,
+          port: port,
+          bytes: bytes,
+        );
+      } catch (e) {
+        throw Exception('Loi in anh: $e');
+      } finally {
+        dispose();
+      }
+    });
   }
 
   Future<void> printImageByPrinterName({
@@ -95,18 +82,70 @@ class HtmlReceiptPrinter {
       throw Exception('printImageByPrinterName only supports Windows');
     }
 
-    try {
-      final bytes = await _buildImagePrintBytes(imageBase64);
+    await _enqueuePrint('windows:${printerName.toLowerCase()}', () async {
+      try {
+        final bytes = await _buildImagePrintBytes(imageBase64);
 
-      await _writeRawBytesToWindowsPrinter(
-        printerName: printerName,
-        bytes: bytes,
-        documentName: 'Alliex image receipt',
+        await _writeRawBytesToWindowsPrinter(
+          printerName: printerName,
+          bytes: bytes,
+          documentName: 'Alliex image receipt',
+        );
+      } catch (e) {
+        throw Exception('Loi in anh theo printerName: $e');
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  Future<T> _enqueuePrint<T>(
+    String key,
+    Future<T> Function() action,
+  ) {
+    final previous = _printQueues[key] ?? Future<void>.value();
+    final completer = Completer<T>();
+
+    late final Future<void> current;
+    current = previous.catchError((_) {}).then((_) async {
+      try {
+        final result = await action();
+        completer.complete(result);
+      } catch (e, stackTrace) {
+        completer.completeError(e, stackTrace);
+      }
+    }).whenComplete(() {
+      if (identical(_printQueues[key], current)) {
+        _printQueues.remove(key);
+      }
+    });
+
+    _printQueues[key] = current;
+
+    return completer.future;
+  }
+
+  Future<void> _sendNetworkBytes({
+    required String ip,
+    required int port,
+    required List<int> bytes,
+  }) async {
+    Socket? socket;
+
+    try {
+      socket = await Socket.connect(
+        ip,
+        port,
+        timeout: const Duration(seconds: 3),
       );
-    } catch (e) {
-      throw Exception('Loi in anh theo printerName: $e');
+
+      socket.setOption(SocketOption.tcpNoDelay, true);
+      socket.add(bytes);
+      await socket.flush();
+      await Future.delayed(_postCutDelay);
     } finally {
-      dispose();
+      await socket?.close();
+      socket?.destroy();
     }
   }
 
@@ -134,8 +173,9 @@ class HtmlReceiptPrinter {
     return <int>[
       ...generator.reset(),
       ...generator.imageRaster(image),
-      ...generator.feed(4),
+      ...generator.feed(6),
       ...generator.cut(),
+      ...generator.reset(),
     ];
   }
 
@@ -201,6 +241,13 @@ class HtmlReceiptPrinter {
           'Ghi thieu du lieu vao printer: ${written.value}/${bytes.length}',
         );
       }
+
+      EndPagePrinter(printerHandle);
+      pageStarted = false;
+      EndDocPrinter(printerHandle);
+      docStarted = false;
+
+      await Future.delayed(_postCutDelay);
     } finally {
       final printerHandle = PRINTER_HANDLE(printerHandlePtr.value);
 
@@ -225,7 +272,14 @@ class HtmlReceiptPrinter {
   }
 
   String _normalizeBase64Image(String value) {
-    return value.replaceFirst(RegExp(r'^data:image/[^;]+;base64,'), '').trim();
+    final trimmed = value.trim();
+    final dataPrefixEnd = trimmed.indexOf(';base64,');
+
+    if (trimmed.startsWith('data:image/') && dataPrefixEnd != -1) {
+      return trimmed.substring(dataPrefixEnd + ';base64,'.length).trim();
+    }
+
+    return trimmed;
   }
 
   Future<img.Image> _buildImageFromHtml(String html) async {

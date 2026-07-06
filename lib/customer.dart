@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -128,10 +129,63 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
 
   String formatMoney(dynamic value) {
     final number = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
-    return '${number.toString().replaceAllMapped(
-          RegExp(r'\B(?=(\d{3})+(?!\d))'),
-          (match) => ',',
-        )} VND';
+    return '${_formatThousands(number)} VND';
+  }
+
+  String _formatThousands(int value) {
+    final raw = value.abs().toString();
+    final buffer = StringBuffer();
+
+    for (var index = 0; index < raw.length; index++) {
+      if (index > 0 && (raw.length - index) % 3 == 0) {
+        buffer.write(',');
+      }
+      buffer.write(raw[index]);
+    }
+
+    return value < 0 ? '-$buffer' : buffer.toString();
+  }
+
+  Uint8List? _decodeBase64Image(String value) {
+    final trimmed = value.trim();
+    final dataPrefixEnd = trimmed.indexOf(';base64,');
+    final normalized = trimmed.startsWith('data:image/') && dataPrefixEnd != -1
+        ? trimmed.substring(dataPrefixEnd + ';base64,'.length).trim()
+        : trimmed;
+
+    try {
+      final bytes = base64Decode(normalized);
+      return _looksLikeImage(bytes) ? bytes : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _looksLikeImage(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+
+    final isPng = bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47;
+    final isJpeg = bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
+    final isGif = bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x38;
+    final isWebp = bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50;
+    final isBmp = bytes[0] == 0x42 && bytes[1] == 0x4D;
+
+    return isPng || isJpeg || isGif || isWebp || isBmp;
   }
 
   @override
@@ -143,6 +197,7 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
     final subFooter = _asMapList(data['subFooter']);
     final footer = _asStringKeyMap(data['footer']);
     final mediaItems = previewItems;
+    final qrImageBytes = qrValue == null ? null : _decodeBase64Image(qrValue!);
 
     return MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -304,12 +359,21 @@ class _CustomerDisplayAppState extends State<CustomerDisplayApp> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            QrImageView(
-                              data: qrValue!,
-                              version: QrVersions.auto,
-                              size: 280,
-                              backgroundColor: Colors.white,
-                            ),
+                            if (qrImageBytes != null)
+                              Image.memory(
+                                qrImageBytes,
+                                width: 280,
+                                height: 280,
+                                fit: BoxFit.contain,
+                                gaplessPlayback: true,
+                              )
+                            else
+                              QrImageView(
+                                data: qrValue!,
+                                version: QrVersions.auto,
+                                size: 280,
+                                backgroundColor: Colors.white,
+                              ),
                             const SizedBox(height: 20),
                             const Text(
                               'Scan to pay',
