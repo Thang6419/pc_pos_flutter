@@ -8,6 +8,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:image/image.dart' as img;
+import 'package:pc_pos/utils/common.dart';
 import 'package:win32/win32.dart';
 
 class HtmlReceiptPrinter {
@@ -23,6 +24,7 @@ class HtmlReceiptPrinter {
 
   static final Map<String, Future<void>> _printQueues = {};
   static const Duration _postCutDelay = Duration(milliseconds: 1200);
+  static int _jobSequence = 0;
 
   double _webViewHeight = 2000;
   OverlayEntry? _overlayEntry;
@@ -34,12 +36,29 @@ class HtmlReceiptPrinter {
     required String ip,
     int port = 9100,
   }) async {
-    await _enqueuePrint('network:$ip:$port', () async {
+    final jobId = _nextJobId('html');
+    final target = 'network:$ip:$port';
+
+    await _logPrint(
+      'PRINT_HTML_REQUEST job=$jobId target=$target htmlChars=${html.length} '
+      'receiptWidth=$receiptWidth paperSize=$paperSize',
+    );
+
+    await _enqueuePrint(jobId, target, () async {
       try {
         final image = await _buildImageFromHtml(html);
-        final bytes = await _buildImageBytes(image);
+        await _logPrint(
+          'PRINT_HTML_IMAGE_READY job=$jobId width=${image.width} '
+          'height=${image.height}',
+        );
+        final bytes = await _buildImageBytes(
+          image,
+          jobId: jobId,
+          source: 'html',
+        );
 
         await _sendNetworkBytes(
+          jobId: jobId,
           ip: ip,
           port: port,
           bytes: bytes,
@@ -57,11 +76,24 @@ class HtmlReceiptPrinter {
     required String ip,
     int port = 9100,
   }) async {
-    await _enqueuePrint('network:$ip:$port', () async {
+    final jobId = _nextJobId('image');
+    final target = 'network:$ip:$port';
+
+    await _logPrint(
+      'PRINT_IMAGE_REQUEST job=$jobId target=$target '
+      'base64Chars=${imageBase64.length} receiptWidth=$receiptWidth '
+      'paperSize=$paperSize',
+    );
+
+    await _enqueuePrint(jobId, target, () async {
       try {
-        final bytes = await _buildImagePrintBytes(imageBase64);
+        final bytes = await _buildImagePrintBytes(
+          imageBase64,
+          jobId: jobId,
+        );
 
         await _sendNetworkBytes(
+          jobId: jobId,
           ip: ip,
           port: port,
           bytes: bytes,
@@ -82,11 +114,24 @@ class HtmlReceiptPrinter {
       throw Exception('printImageByPrinterName only supports Windows');
     }
 
-    await _enqueuePrint('windows:${printerName.toLowerCase()}', () async {
+    final jobId = _nextJobId('image-win');
+    final target = 'windows:${printerName.toLowerCase()}';
+
+    await _logPrint(
+      'PRINT_IMAGE_WIN_REQUEST job=$jobId target="$target" '
+      'printerName="$printerName" base64Chars=${imageBase64.length} '
+      'receiptWidth=$receiptWidth paperSize=$paperSize',
+    );
+
+    await _enqueuePrint(jobId, target, () async {
       try {
-        final bytes = await _buildImagePrintBytes(imageBase64);
+        final bytes = await _buildImagePrintBytes(
+          imageBase64,
+          jobId: jobId,
+        );
 
         await _writeRawBytesToWindowsPrinter(
+          jobId: jobId,
           printerName: printerName,
           bytes: bytes,
           documentName: 'Alliex image receipt',
@@ -100,18 +145,41 @@ class HtmlReceiptPrinter {
   }
 
   Future<T> _enqueuePrint<T>(
+    String jobId,
     String key,
     Future<T> Function() action,
   ) {
     final previous = _printQueues[key] ?? Future<void>.value();
+    final hadPendingJob = _printQueues.containsKey(key);
+    final queuedAt = DateTime.now();
     final completer = Completer<T>();
+
+    unawaited(
+      _logPrint(
+        'PRINT_QUEUE_WAIT job=$jobId target=$key pending=$hadPendingJob',
+      ),
+    );
 
     late final Future<void> current;
     current = previous.catchError((_) {}).then((_) async {
+      final waitMs = DateTime.now().difference(queuedAt).inMilliseconds;
+      final stopwatch = Stopwatch()..start();
+      await _logPrint('PRINT_QUEUE_RUN job=$jobId target=$key waitMs=$waitMs');
+
       try {
         final result = await action();
+        stopwatch.stop();
+        await _logPrint(
+          'PRINT_QUEUE_DONE job=$jobId target=$key '
+          'elapsedMs=${stopwatch.elapsedMilliseconds}',
+        );
         completer.complete(result);
       } catch (e, stackTrace) {
+        stopwatch.stop();
+        await _logPrint(
+          'PRINT_QUEUE_ERROR job=$jobId target=$key '
+          'elapsedMs=${stopwatch.elapsedMilliseconds} error=$e',
+        );
         completer.completeError(e, stackTrace);
       }
     }).whenComplete(() {
@@ -126,36 +194,67 @@ class HtmlReceiptPrinter {
   }
 
   Future<void> _sendNetworkBytes({
+    required String jobId,
     required String ip,
     required int port,
     required List<int> bytes,
   }) async {
     Socket? socket;
+    final stopwatch = Stopwatch()..start();
 
     try {
+      await _logPrint(
+        'PRINT_SOCKET_CONNECT_START job=$jobId ip=$ip port=$port '
+        'bytes=${bytes.length}',
+      );
       socket = await Socket.connect(
         ip,
         port,
         timeout: const Duration(seconds: 3),
       );
+      await _logPrint(
+        'PRINT_SOCKET_CONNECTED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
 
       socket.setOption(SocketOption.tcpNoDelay, true);
       socket.add(bytes);
       await socket.flush();
+      await _logPrint(
+        'PRINT_SOCKET_FLUSHED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+      await _logPrint(
+        'PRINT_POST_CUT_WAIT job=$jobId delayMs=${_postCutDelay.inMilliseconds}',
+      );
       await Future.delayed(_postCutDelay);
     } finally {
       await socket?.close();
       socket?.destroy();
+      await _logPrint(
+        'PRINT_SOCKET_CLOSED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
     }
   }
 
-  Future<List<int>> _buildImagePrintBytes(String imageBase64) async {
-    final imageBytes = base64Decode(_normalizeBase64Image(imageBase64));
+  Future<List<int>> _buildImagePrintBytes(
+    String imageBase64, {
+    required String jobId,
+  }) async {
+    final normalized = _normalizeBase64Image(imageBase64);
+    final imageBytes = base64Decode(normalized);
     final decoded = img.decodeImage(imageBytes);
 
     if (decoded == null) {
       throw Exception('Khong decode duoc anh');
     }
+
+    await _logPrint(
+      'PRINT_IMAGE_DECODED job=$jobId base64Chars=${imageBase64.length} '
+      'normalizedChars=${normalized.length} imageBytes=${imageBytes.length} '
+      'sourceWidth=${decoded.width} sourceHeight=${decoded.height}',
+    );
 
     final image = img.copyResize(
       decoded,
@@ -163,23 +262,44 @@ class HtmlReceiptPrinter {
       interpolation: img.Interpolation.nearest,
     );
 
-    return _buildImageBytes(image);
+    await _logPrint(
+      'PRINT_IMAGE_RESIZED job=$jobId width=${image.width} '
+      'height=${image.height}',
+    );
+
+    return _buildImageBytes(
+      image,
+      jobId: jobId,
+      source: 'image',
+    );
   }
 
-  Future<List<int>> _buildImageBytes(img.Image image) async {
+  Future<List<int>> _buildImageBytes(
+    img.Image image, {
+    required String jobId,
+    required String source,
+  }) async {
     final profile = await CapabilityProfile.load();
     final generator = Generator(paperSize, profile);
 
-    return <int>[
+    final bytes = <int>[
       ...generator.reset(),
       ...generator.imageRaster(image),
       ...generator.feed(6),
       ...generator.cut(),
       ...generator.reset(),
     ];
+
+    await _logPrint(
+      'PRINT_ESC_POS_BYTES job=$jobId source=$source bytes=${bytes.length} '
+      'hasCut=${_containsCutCommand(bytes)} tailHex="${_tailHex(bytes)}"',
+    );
+
+    return bytes;
   }
 
   Future<void> _writeRawBytesToWindowsPrinter({
+    required String jobId,
     required String printerName,
     required List<int> bytes,
     required String documentName,
@@ -194,9 +314,14 @@ class HtmlReceiptPrinter {
 
     var docStarted = false;
     var pageStarted = false;
+    final stopwatch = Stopwatch()..start();
 
     try {
       buffer.asTypedList(bytes.length).setAll(0, bytes);
+      await _logPrint(
+        'PRINT_WIN_OPEN_START job=$jobId printerName="$printerName" '
+        'bytes=${bytes.length}',
+      );
 
       final openResult = OpenPrinter(
         PCWSTR(printerNamePtr),
@@ -209,6 +334,10 @@ class HtmlReceiptPrinter {
           'Khong mo duoc printer "$printerName": ${openResult.error}',
         );
       }
+      await _logPrint(
+        'PRINT_WIN_OPENED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
 
       final printerHandle = PRINTER_HANDLE(printerHandlePtr.value);
 
@@ -221,11 +350,19 @@ class HtmlReceiptPrinter {
         throw Exception('Khong start duoc print document');
       }
       docStarted = true;
+      await _logPrint(
+        'PRINT_WIN_DOC_STARTED job=$jobId docId=$docId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
 
       if (!StartPagePrinter(printerHandle)) {
         throw Exception('Khong start duoc print page');
       }
       pageStarted = true;
+      await _logPrint(
+        'PRINT_WIN_PAGE_STARTED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
 
       if (!WritePrinter(
         printerHandle,
@@ -235,6 +372,10 @@ class HtmlReceiptPrinter {
       )) {
         throw Exception('Ghi du lieu vao printer that bai');
       }
+      await _logPrint(
+        'PRINT_WIN_WRITTEN job=$jobId written=${written.value} '
+        'expected=${bytes.length} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
 
       if (written.value != bytes.length) {
         throw Exception(
@@ -244,9 +385,20 @@ class HtmlReceiptPrinter {
 
       EndPagePrinter(printerHandle);
       pageStarted = false;
+      await _logPrint(
+        'PRINT_WIN_PAGE_ENDED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       EndDocPrinter(printerHandle);
       docStarted = false;
+      await _logPrint(
+        'PRINT_WIN_DOC_ENDED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
 
+      await _logPrint(
+        'PRINT_POST_CUT_WAIT job=$jobId delayMs=${_postCutDelay.inMilliseconds}',
+      );
       await Future.delayed(_postCutDelay);
     } finally {
       final printerHandle = PRINTER_HANDLE(printerHandlePtr.value);
@@ -260,6 +412,10 @@ class HtmlReceiptPrinter {
         }
         ClosePrinter(printerHandle);
       }
+      await _logPrint(
+        'PRINT_WIN_CLOSED job=$jobId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
 
       calloc.free(printerNamePtr);
       calloc.free(printerHandlePtr);
@@ -280,6 +436,38 @@ class HtmlReceiptPrinter {
     }
 
     return trimmed;
+  }
+
+  static String _nextJobId(String prefix) {
+    _jobSequence += 1;
+    return '$prefix-${DateTime.now().millisecondsSinceEpoch}-$_jobSequence';
+  }
+
+  Future<void> _logPrint(String message) async {
+    try {
+      await writeLog(message);
+    } catch (_) {
+      // Logging is diagnostic only and must never affect printing.
+    }
+  }
+
+  String _tailHex(List<int> bytes, {int length = 32}) {
+    final start = bytes.length > length ? bytes.length - length : 0;
+
+    return bytes
+        .skip(start)
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join(' ');
+  }
+
+  bool _containsCutCommand(List<int> bytes) {
+    for (var index = 0; index < bytes.length - 2; index++) {
+      if (bytes[index] == 0x1D && bytes[index + 1] == 0x56) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   Future<img.Image> _buildImageFromHtml(String html) async {
