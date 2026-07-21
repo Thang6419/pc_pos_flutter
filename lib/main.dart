@@ -411,6 +411,79 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
     const js = r'''
 (function () {
+  if (!window.__PC_POS_TOUCH_GUARD__) {
+    window.__PC_POS_TOUCH_GUARD__ = true;
+
+    var touchStyle = document.createElement('style');
+    touchStyle.id = 'pc-pos-touch-guard';
+    touchStyle.textContent =
+      'html, body { overscroll-behavior: none !important; }';
+    (document.head || document.documentElement).appendChild(touchStyle);
+
+    var touchStartX = 0;
+    var touchStartY = 0;
+
+    var canScrollFrom = function (target, horizontal) {
+      var element = target instanceof Element ? target : target.parentElement;
+
+      while (element && element !== document.body &&
+             element !== document.documentElement) {
+        var style = window.getComputedStyle(element);
+        var overflow = horizontal ? style.overflowX : style.overflowY;
+        var permitsScroll = overflow === 'auto' || overflow === 'scroll' ||
+          overflow === 'overlay';
+        var hasScrollableContent = horizontal
+          ? element.scrollWidth > element.clientWidth + 1
+          : element.scrollHeight > element.clientHeight + 1;
+
+        if (permitsScroll && hasScrollableContent) return true;
+        element = element.parentElement;
+      }
+
+      return false;
+    };
+
+    document.addEventListener('touchstart', function (event) {
+      if (event.touches && event.touches.length === 1) {
+        touchStartX = event.touches[0].clientX;
+        touchStartY = event.touches[0].clientY;
+      } else if (event.touches && event.touches.length > 1) {
+        event.preventDefault();
+      }
+    }, {
+      passive: false,
+      capture: true
+    });
+
+    document.addEventListener('touchmove', function (event) {
+      if (!event.touches || event.touches.length !== 1) {
+        event.preventDefault();
+        return;
+      }
+
+      var deltaX = event.touches[0].clientX - touchStartX;
+      var deltaY = event.touches[0].clientY - touchStartY;
+      var horizontal = Math.abs(deltaX) > Math.abs(deltaY);
+
+      if (!canScrollFrom(event.target, horizontal)) {
+        event.preventDefault();
+      }
+    }, {
+      passive: false,
+      capture: true
+    });
+
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (name) {
+      document.addEventListener(name, function (event) {
+        event.preventDefault();
+      }, { passive: false, capture: true });
+    });
+
+    document.addEventListener('wheel', function (event) {
+      if (event.ctrlKey) event.preventDefault();
+    }, { passive: false, capture: true });
+  }
+
   if (window.__PC_POS_NATIVE_BRIDGE__) return;
 
   window.__PC_POS_NATIVE_BRIDGE__ = true;
