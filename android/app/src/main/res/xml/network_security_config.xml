@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">103.159.59.15</domain>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">dev-posvms.sharepos.vn</domain>
     </domain-config>
 </network-security-config>

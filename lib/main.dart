@@ -25,7 +25,7 @@ import 'package:webview_win_floating/webview_win_floating.dart';
 import 'utils/device_id_service.dart';
 
 const _customerDisplayTitle = 'Customer Display';
-const _customerDisplayDomain = 'http://103.159.59.15:8082/api';
+const _customerDisplayDomain = 'https://dev-posvms.sharepos.vn/api';
 int _customerDisplayHwndAddress = 0;
 
 bool get _supportsWindowControls => Platform.isWindows;
@@ -277,7 +277,7 @@ class WebViewPage extends StatefulWidget {
 }
 
 class _WebViewPageState extends State<WebViewPage> with WindowListener {
-  static const String baseUrl = 'http://103.159.59.15:8082/';
+  static const String baseUrl = 'https://dev-posvms.sharepos.vn/';
 
   final GlobalKey webViewKey = GlobalKey();
 
