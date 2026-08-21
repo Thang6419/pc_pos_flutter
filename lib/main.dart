@@ -25,7 +25,7 @@ import 'package:webview_win_floating/webview_win_floating.dart';
 import 'utils/device_id_service.dart';
 
 const _customerDisplayTitle = 'Customer Display';
-const _customerDisplayDomain = 'https://test-posvms.sharepos.vn/api';
+const _customerDisplayDomain = 'https://dev-posvms.sharepos.vn/api';
 int _customerDisplayHwndAddress = 0;
 
 bool get _supportsWindowControls => Platform.isWindows;
@@ -277,7 +277,7 @@ class WebViewPage extends StatefulWidget {
 }
 
 class _WebViewPageState extends State<WebViewPage> with WindowListener {
-  static const String baseUrl = 'https://test-posvms.sharepos.vn/';
+  static const String baseUrl = 'https://dev-posvms.sharepos.vn/';
 
   final GlobalKey webViewKey = GlobalKey();
 
@@ -544,6 +544,16 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
       };
     }
     switch (handlerName) {
+      case HandlerNames.writeLog:
+        const maxLogLength = 10000;
+        final encodedArgs = jsonEncode(args);
+        final message = encodedArgs.length <= maxLogLength
+            ? encodedArgs
+            : '${encodedArgs.substring(0, maxLogLength)}...[truncated]';
+
+        await writeLog('WEBVIEW LOG: $message');
+        return {'success': true};
+
       case HandlerNames.sendToCustomerDisplay:
         final data = args.isNotEmpty && args.first is Map
             ? Map<String, dynamic>.from(args.first as Map)
@@ -805,6 +815,7 @@ window.__nativeBridgeResolve(
       HandlerNames.toggleFullScreen,
       HandlerNames.openMaximumWindow,
       HandlerNames.openMinimizeWindow,
+      HandlerNames.writeLog,
       HandlerNames.print,
       HandlerNames.printImage,
       HandlerNames.printImageByPrinterName,

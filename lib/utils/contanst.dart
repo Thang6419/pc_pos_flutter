@@ -10,6 +10,7 @@ abstract final class HandlerNames {
   static const String toggleFullScreen = 'toggleFullScreen';
   static const String openMaximumWindow = 'openMaximumWindow';
   static const String openMinimizeWindow = 'openMinimizeWindow';
+  static const String writeLog = 'writeLog';
   static const String print = 'print';
   static const String printImage = 'printImage';
   static const String printImageByPrinterName = 'printImageByPrinterName';

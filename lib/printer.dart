@@ -288,6 +288,7 @@ class HtmlReceiptPrinter {
     final bytes = <int>[
       ...generator.reset(),
       ...generator.imageRaster(image),
+      ...generator.feed(6),
       ..._fullCut(),
       ...generator.reset(),
     ];
@@ -518,7 +519,7 @@ class HtmlReceiptPrinter {
       final receiptHeight =
           double.tryParse(heightResult.toString()) ?? _webViewHeight;
 
-      _webViewHeight = receiptHeight;
+      _webViewHeight = receiptHeight + 20;
       _overlayEntry?.markNeedsBuild();
 
       await Future.delayed(const Duration(milliseconds: 500));
