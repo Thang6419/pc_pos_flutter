@@ -4,11 +4,11 @@
 [Setup]
 AppId={{147A48C2-0ADB-4166-810C-4ED83A4449D3}}
 AppName=Alliex
-AppVersion=1.2.0
+AppVersion=1.2.2
 DefaultDirName={localappdata}\Alliex
 DefaultGroupName=Alliex
 OutputDir=Output
-OutputBaseFilename=Alliex_Setup_1.2.0
+OutputBaseFilename=Alliex_Test_Setup_1.2.2
 Compression=lzma
 SolidCompression=yes
 DisableProgramGroupPage=yes
