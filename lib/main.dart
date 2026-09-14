@@ -278,7 +278,7 @@ class WebViewPage extends StatefulWidget {
 
 class _WebViewPageState extends State<WebViewPage>
     with WindowListener, WidgetsBindingObserver {
-  static const String baseUrl = 'https://dev-posvms.sharepos.vn/';
+  static const String baseUrl = 'https://posvms.sharepos.vn/';
 
   final GlobalKey webViewKey = GlobalKey();
 
