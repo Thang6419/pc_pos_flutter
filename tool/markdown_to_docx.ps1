@@ -64,7 +64,8 @@ try {
         }
 
         if ($line -match '^[-*]\s+(.+)$') {
-            $paragraphs.Add((New-ParagraphXml -Text ("• " + $matches[1]) -Style 'Normal'))
+            $bullet = [char]0x2022
+            $paragraphs.Add((New-ParagraphXml -Text ("$bullet " + $matches[1]) -Style 'Normal'))
             continue
         }
 
