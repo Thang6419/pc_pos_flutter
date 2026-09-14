@@ -25,7 +25,7 @@ import 'package:webview_win_floating/webview_win_floating.dart';
 import 'utils/device_id_service.dart';
 
 const _customerDisplayTitle = 'Customer Display';
-const _customerDisplayDomain = 'https://dev-posvms.sharepos.vn/api';
+const _customerDisplayDomain = 'https://posvms.sharepos.vn/api';
 int _customerDisplayHwndAddress = 0;
 
 bool get _supportsWindowControls => Platform.isWindows;

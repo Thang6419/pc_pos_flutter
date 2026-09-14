@@ -53,14 +53,14 @@ Không phát hành nếu `baseUrl` khác URL production trên.
 Version được khai báo trong `pubspec.yaml`:
 
 ```yaml
-version: 1.3.0+25
+version: 1.3.0+26
 ```
 
 Trong đó:
 
 - `1.3.0` là version hiển thị cho người dùng.
-- `25` là build number nội bộ.
-- Chuỗi đầy đủ là `1.3.0+25`.
+- `26` là build number nội bộ.
+- Chuỗi đầy đủ là `1.3.0+26`.
 
 Mỗi lần tạo release mới:
 
@@ -72,7 +72,7 @@ Ví dụ:
 
 ```text
 Bản cũ: 1.2.12+24
-Bản mới: 1.3.0+25
+Bản mới: 1.3.0+26
 ```
 
 ## 4. Công cụ cần cài
@@ -152,7 +152,7 @@ static const String baseUrl = 'https://posvms.sharepos.vn/';
 Mở `pubspec.yaml`:
 
 ```yaml
-version: 1.3.0+25
+version: 1.3.0+26
 ```
 
 ### 6.3. Chỉnh Inno Setup
@@ -172,10 +172,10 @@ Tên installer production sử dụng đúng mẫu `Alliex_Setup_<version>`.
 rg -n "^version:|baseUrl|AppVersion|OutputBaseFilename" pubspec.yaml lib\main.dart pc_pos_setup.iss
 ```
 
-Với production `1.3.0+25`, kết quả phải thể hiện:
+Với production `1.3.0+26`, kết quả phải thể hiện:
 
 ```text
-version: 1.3.0+25
+version: 1.3.0+26
 https://posvms.sharepos.vn/
 AppVersion=1.3.0
 OutputBaseFilename=Alliex_Setup_1.3.0
@@ -240,7 +240,7 @@ Shorebird sẽ:
 Khi thành công sẽ thấy dạng:
 
 ```text
-Published Release 1.3.0+25!
+Published Release 1.3.0+26!
 ```
 
 APK được tạo tại:
@@ -275,7 +275,7 @@ shorebird release --platforms=windows
 Khi thành công sẽ thấy:
 
 ```text
-Published Release 1.3.0+25!
+Published Release 1.3.0+26!
 ```
 
 Thư mục Windows được tạo tại:
@@ -371,7 +371,7 @@ $exe = 'Output\production-1.3.0\Alliex_Setup_1.3.0.exe'
 Ví dụ của bản `1.3.0`:
 
 ```text
-239027507
+239027650
 ```
 
 Mỗi lần build lại installer phải lấy lại `length`, kể cả version không đổi.
@@ -450,9 +450,9 @@ Mẫu production:
   <channel>
     <item>
       <title>PC POS 1.3.0</title>
-      <enclosure url="https://posvms.sharepos.vn/api/version/download/Alliex_Setup_1.3.0.exe" sparkle:version="1.3.0+25" length="239027507" sparkle:dsaSignature="THAY_CHU_KY_BASE64_MOI_VAO_DAY" type="application/octet-stream"/>
+      <enclosure url="https://posvms.sharepos.vn/api/version/download/Alliex_Setup_1.3.0.exe" sparkle:version="1.3.0+26" length="THAY_LENGTH_MOI_VAO_DAY" sparkle:dsaSignature="THAY_CHU_KY_BASE64_MOI_VAO_DAY" type="application/octet-stream"/>
       <version>1.3.0</version>
-      <buildNumber>25</buildNumber>
+      <buildNumber>26</buildNumber>
       <url>https://posvms.sharepos.vn/api/version/download/app-release-1.3.0.apk</url>
     </item>
   </channel>
@@ -608,13 +608,13 @@ Chỉ patch khi thay đổi nằm trong phần Dart mà Shorebird hỗ trợ.
 Android:
 
 ```powershell
-shorebird patch --platforms=android --release-version=1.3.0+25
+shorebird patch --platforms=android --release-version=1.3.0+26
 ```
 
 Windows:
 
 ```powershell
-shorebird patch --platforms=windows --release-version=1.3.0+25
+shorebird patch --platforms=windows --release-version=1.3.0+26
 ```
 
 Khi thành công, CLI hiển thị:

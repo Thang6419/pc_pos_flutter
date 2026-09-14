@@ -10,8 +10,7 @@ import 'package:pc_pos/utils/common.dart';
 import 'package:shorebird_code_push/shorebird_code_push.dart';
 import 'package:xml/xml.dart';
 
-const _appcastUrl =
-    'https://dev-posvms.sharepos.vn/api/version/check-version-xml';
+const _appcastUrl = 'https://posvms.sharepos.vn/api/version/check-version-xml';
 
 final appUpdateNavigatorKey = GlobalKey<NavigatorState>();
 final appUpdatePromptVisible = ValueNotifier<bool>(false);
