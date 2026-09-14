@@ -276,7 +276,8 @@ class WebViewPage extends StatefulWidget {
   State<WebViewPage> createState() => _WebViewPageState();
 }
 
-class _WebViewPageState extends State<WebViewPage> with WindowListener {
+class _WebViewPageState extends State<WebViewPage>
+    with WindowListener, WidgetsBindingObserver {
   static const String baseUrl = 'https://dev-posvms.sharepos.vn/';
 
   final GlobalKey webViewKey = GlobalKey();
@@ -288,6 +289,9 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   bool _isOpeningSecondWindow = false;
   bool _isClosingApp = false;
   bool _isWebViewReady = false;
+  bool _wasInBackground = false;
+  bool _wasWindowBlurred = false;
+  DateTime? _lastAppResumedNotification;
   Map<String, dynamic>? _latestCustomerDisplayData;
 
   String? deviceId;
@@ -299,6 +303,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(() async {
       if (Platform.isWindows) {
         await Future.delayed(const Duration(milliseconds: 300));
@@ -323,6 +328,7 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_supportsWindowControls) {
       windowManager.removeListener(this);
     }
@@ -334,6 +340,66 @@ class _WebViewPageState extends State<WebViewPage> with WindowListener {
   @override
   void onWindowClose() {
     unawaited(closeApp());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      _wasInBackground = true;
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed && _wasInBackground) {
+      _wasInBackground = false;
+      unawaited(_notifyWebAppResumed());
+    }
+  }
+
+  @override
+  void onWindowBlur() {
+    _wasWindowBlurred = true;
+  }
+
+  @override
+  void onWindowFocus() {
+    if (!_wasWindowBlurred) return;
+
+    _wasWindowBlurred = false;
+    unawaited(_notifyWebAppResumed());
+  }
+
+  Future<void> _notifyWebAppResumed() async {
+    if (_isClosingApp || !_isWebViewReady) return;
+
+    const eventName = 'appResumed';
+
+    final now = DateTime.now();
+    final lastNotification = _lastAppResumedNotification;
+    if (lastNotification != null &&
+        now.difference(lastNotification) < const Duration(milliseconds: 500)) {
+      return;
+    }
+    _lastAppResumedNotification = now;
+
+    final encodedEventName = jsonEncode(eventName);
+    final script = '''
+(function () {
+  window.dispatchEvent(new Event($encodedEventName));
+})();
+''';
+
+    try {
+      if (Platform.isWindows) {
+        await windowsWebViewController?.runJavaScript(script);
+      } else {
+        await androidWebViewController?.evaluateJavascript(source: script);
+      }
+      await writeLog('WEBVIEW EVENT: $eventName');
+    } catch (e) {
+      await writeLog('WEBVIEW EVENT ERROR: $eventName: $e');
+    }
   }
 
   Future<void> init() async {
